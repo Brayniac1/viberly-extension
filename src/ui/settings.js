@@ -2061,19 +2061,20 @@ async function CG_delete(id) {
 	    <!-- (REMOVED the in-card search here) -->
 	
 <div id="cgList" style="display:flex;flex-direction:column;gap:8px"></div>
+
 <!-- Quick Adds list (now inside the same section) -->
 
-	  <div class="card" style="margin-top:8px">
-	    <div class="toprow" style="margin-bottom:6px">
-	      <div>
-	        <div style="font-weight:600">Quick Adds</div>
-	        <div class="muted">Favorites you added from the Library. Chips show Free vs Purchased.</div>
-	      </div>
-	    </div>
-	    <div id="qaList" style="display:flex;flex-direction:column;gap:8px"></div>
-	  </div>
-	
-	</section>
+<div class="card" style="margin-top:8px">
+  <div class="toprow" style="margin-bottom:6px">
+    <div>
+      <div style="font-weight:600">Quick Adds</div>
+    </div>
+  </div>
+  <div id="qaList" style="display:flex;flex-direction:column;gap:8px"></div>
+</div>
+
+</section>
+
 
 
 	<!-- SETTINGS TAB CONTENT -->
@@ -3337,9 +3338,13 @@ function renderQuickAddsList(){
       const activeMap = await qaActiveGetMap();
 
       if (!favIds.length) {
-	  holder.innerHTML = `<div class="muted">No quick adds yet. Open the Library tab and click “Quick Add”.</div>`;
-	  return;
-	}
+        const empty = document.createElement('div');
+        empty.className = 'muted';                  // same class used for "No custom prompts"
+        empty.textContent = 'No quick adds yet. Open the Marketplace and click "Quick Add".';
+        holder.appendChild(empty);
+        return;
+      }
+      
 	
 	// Shared query over name, text, type, subcategory, labels
 	const ql = String(__CG_QUERY || '').toLowerCase().trim();

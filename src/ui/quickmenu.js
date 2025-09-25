@@ -129,6 +129,20 @@ function __vgMakeLoader(label = 'Loading…') {
   return row;
 }
 
+// --- Quick Menu base styles (muted text etc.) ---
+function __vgEnsureQMStyles() {
+  if (document.getElementById('vg-qm-style')) return;
+  const st = document.createElement('style');
+  st.id = 'vg-qm-style';
+  st.textContent = `
+    /* Scope to the Quick Menu only */
+    #vg-quick-menu .muted {
+      color: #a1a1aa;
+      font: 12px/1.35 Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+    }
+  `;
+  document.head.appendChild(st);
+}
 
 
 // Purple plus (standalone, no circle) — larger for better legibility
@@ -1481,11 +1495,15 @@ async function __vgActiveQuickGuardIds() {
 ];
 
 
-	  function openQuickMenu(pillRect) {
-	  document.getElementById("vg-quick-menu")?.remove();
+function openQuickMenu(pillRect) {
+  document.getElementById("vg-quick-menu")?.remove();
 
-	  // --- normalize incoming rect values (avoid NaN/undefined during first frame) ---
-	  const prLeft  = Number(pillRect?.left)  || 0;
+  // Ensure base QM styles (muted text, etc.)
+  __vgEnsureQMStyles();
+
+  // --- normalize incoming rect values (avoid NaN/undefined during first frame) ---
+  const prLeft  = Number(pillRect?.left)  || 0;
+
 	  const prTop   = Number(pillRect?.top)   || 0;
 	  const prWidth = Number(pillRect?.width) || 0;
 	  const centerX = Math.round(prLeft + prWidth / 2); // horizontal anchor
