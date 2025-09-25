@@ -152,7 +152,6 @@ async function __vgGetAccessSnapshotCached() {
   }
 }
 
-// Gate helper: blocks most messages when team is blocked; still allows auth/status/debug.
 const __VG_ALLOWED_WHEN_BLOCKED = new Set([
   "ACCESS_STATUS",
   "ACCESS_RECHECK",
@@ -170,7 +169,10 @@ const __VG_ALLOWED_WHEN_BLOCKED = new Set([
   "VG_DEBUG:DUMP_USER_DATA",
   "VG_DEBUG:CONFIG",
   "TEAM_CHECKOUT_START", // conditionally allowed (trial_expired + admin)
-  "VG_CAPTURE_VISIBLE_TAB", // ← allow screenshot capture even if gate is blocking other features
+  "VG_CAPTURE_VISIBLE_TAB", // screenshot allowed
+  "COUNTER_HANDSHAKE", // allow handshake while gated
+  "USAGE_TEST_INGEST", // one-shot ingest probe while gated
+  "VG_USAGE_BATCH", // ✅ allow batched usage events from page
 ]);
 
 async function __vgGateIfBlocked(type, sender) {
@@ -1344,6 +1346,164 @@ async function handleMessage(msg, _host = "", sender = null) {
   if (gate) return gate;
 
   switch (msg?.type) {
+    // ===== COUNTER · Phase 1 Handshake (whitelist check only) =====
+    case "COUNTER_HANDSHAKE": {
+      try {
+        const host = (msg?.payload?.host || "")
+          .toLowerCase()
+          .replace(/^www\./, "");
+        const path =
+          typeof msg?.payload?.path === "string" && msg.payload.path
+            ? msg.payload.path
+            : "/";
+        if (!host) return { ok: false, enabled: false, error: "missing host" };
+
+        const pick = await vbFetchPlacement(host, path);
+        if (!pick || pick.enabled === false) {
+          return { ok: false, enabled: false, reason: "not_enabled" };
+        }
+
+        // Minimal normalized shape, no selectors needed in Phase 1
+        return {
+          ok: true,
+          enabled: true,
+          placement: { id: pick.id || null, host, path },
+        };
+      } catch (e) {
+        return { ok: false, enabled: false, error: String(e?.message || e) };
+      }
+    }
+
+    // ===== USAGE · Test write via Edge Function (one-shot probe) =====
+    case "USAGE_TEST_INGEST": {
+      try {
+        // Require a session for RLS
+        const {
+          data: { session },
+        } = await client.auth.getSession();
+        if (!session?.access_token) return { ok: false, error: "NO_SESSION" };
+
+        const host = (msg?.payload?.host || "")
+          .toLowerCase()
+          .replace(/^www\./, "");
+        const path =
+          typeof msg?.payload?.path === "string" && msg.payload.path
+            ? msg.payload.path
+            : "/";
+        const note = String(msg?.payload?.note || "").slice(0, 200);
+
+        // Build a minimal valid event that the EF will accept
+        const nowIso = new Date().toISOString();
+        const ext_version = chrome?.runtime?.getManifest?.().version || null;
+
+        const body = {
+          // device_id: 'dev-probe-1', // optional
+          events: [
+            {
+              host, // REQUIRED per event by EF
+              direction: "in", // MUST be 'in' or 'out'
+              ts: nowIso, // within ±24h
+              char_len: Math.max(1, note.length || 1),
+              est_tokens: 1,
+              session_id: crypto?.randomUUID?.() || null,
+              confidence: "estimated_profile",
+              ext_version,
+              // fingerprint_hash: null // optional
+            },
+          ],
+        };
+
+        // Use supabase-js to invoke the Edge Function by name (handles auth header)
+        const { data, error } = await client.functions.invoke("usage-ingest", {
+          body,
+        });
+
+        if (error) {
+          let status,
+            text = "";
+          try {
+            status = error?.context?.response?.status;
+          } catch {}
+          try {
+            text = await error?.context?.response?.text();
+          } catch {}
+          return {
+            ok: false,
+            status: status ?? 500,
+            error: "INGEST_FAILED",
+            resp: text || error?.message || String(error),
+          };
+        }
+
+        // EF returns { received, inserted, upserts }
+        return { ok: true, resp: data };
+      } catch (e) {
+        return { ok: false, error: String(e?.message || e) };
+      }
+    }
+
+    // ===== USAGE · Batched page → background events (Phase 6) =====
+    case "VG_USAGE_BATCH": {
+      try {
+        if (!msg || !Array.isArray(msg.events))
+          return { ok: false, error: "INVALID_BATCH" };
+
+        const host = String(msg.host || "")
+          .toLowerCase()
+          .replace(/^www\./, "");
+        const path = typeof msg.path === "string" ? msg.path : "/"; // not persisted yet
+        const sessionKey = String(msg.sessionId || ""); // non-uuid session id
+        const extVersion = chrome?.runtime?.getManifest?.().version || null;
+
+        // Require session for RLS
+        const {
+          data: { session },
+        } = await client.auth.getSession();
+        if (!session?.access_token) {
+          vgInfo?.("[VG][usage][bg] skip persist (no session)");
+          return {
+            ok: true,
+            received: msg.events.length,
+            persisted: 0,
+            reason: "NO_SESSION",
+          };
+        }
+
+        // Ensure each event carries host to satisfy EF validation
+        const eventsWithHost = msg.events.map((ev) => ({
+          ...ev,
+          host, // EF checks e.host; we attach batch host here
+        }));
+
+        // Forward to Edge Function
+        const body = {
+          host,
+          path,
+          sessionKey, // EF maps to fingerprint_hash
+          ext_version: extVersion,
+          events: eventsWithHost, // now each event has e.host
+        };
+
+        const { data, error } = await client.functions.invoke("usage-ingest", {
+          body,
+        });
+        if (error) {
+          vgWarn("[VG][usage][bg] ingest error:", error?.message || error);
+          return { ok: false, error: String(error?.message || error) };
+        }
+
+        vgInfo?.("[VG][usage][bg] persisted:", data);
+        return {
+          ok: true,
+          received: msg.events.length,
+          persisted: data?.inserted ?? 0,
+        };
+      } catch (e) {
+        vgWarn("[VG][usage][bg] exception:", e);
+        return { ok: false, error: String(e?.message || e) };
+      }
+    }
+
     // ===== AUTH / STORAGE (existing) =====
     case "SIGN_UP": {
       const { email, password } = msg;

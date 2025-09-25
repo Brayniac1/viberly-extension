@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Viberly AI",
   "short_name": "Viberly AI",
-  "version": "1.0.42",
+  "version": "1.0.44",
   "description": "Save and reuse your favorite prompts instantly inside Chrome.",
   "icons": {
     "16": "assets/active-pill-16.png",
@@ -117,7 +117,12 @@
         "https://app.heygen.com/*",
         "https://dream-machine.lumalabs.ai/*"
       ],
-      "js": ["src/boot.js", "src/ui/savehighlight.js", "src/ui/hud.js"],
+      "js": [
+        "src/boot.js",
+        "src/ui/savehighlight.js",
+        "src/ui/hud.js",
+        "src/usage/counter.js"
+      ],
       "run_at": "document_idle",
       "all_frames": false
     }
@@ -136,11 +141,16 @@
         "src/ui/ai-chat.js",
         "src/ui/bug-buster.js",
         "src/ui/screenshot.js",
-        "assets/*"
+        "assets/*",
+
+        "src/usage/tokenCounter.js",
+        "vendor/gpt-tokenizer/*",
+        "vendor/gpt-tokenizer/**/*"
       ],
       "matches": ["<all_urls>"]
     }
   ],
+
   "commands": {
     "open-marketplace": {
       "suggested_key": { "default": "Ctrl+Shift+P", "mac": "Command+Shift+P" },
