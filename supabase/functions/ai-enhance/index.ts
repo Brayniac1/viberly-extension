@@ -1,0 +1,170 @@
+// supabase/functions/ai-enhance/index.ts
+// Enhances a custom guard prompt via OpenAI and returns the refined text.
+
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+
+// --- Env
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+// --- Simple helpers
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type",
+};
+
+function json(body: unknown, init: number | ResponseInit = 200) {
+  const base = typeof init === "number" ? { status: init } : init;
+  return new Response(JSON.stringify(body), {
+    ...base,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...CORS,
+      ...(base?.headers ?? {}),
+    },
+  });
+}
+
+function bad(msg: string, code = 400) {
+  return json({ error: msg }, code);
+}
+
+// Optional: verify the Supabase session token
+async function getUserFromBearer(req: Request) {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "";
+    if (!token || !SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+    const supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data, error } = await supa.auth.getUser();
+    if (error || !data?.user) return null;
+    return data.user;
+  } catch {
+    return null;
+  }
+}
+
+// --- System prompt crafted for VibeGuardian guard-writing
+const SYSTEM_PROMPT = `
+You are the "AI Enhance" prompt assistant for VibeGuardian. Your job is to transform a user's raw text into a
+high-quality **Guard Prompt** block (or guard helper depending on the goal of the user) used to constrain (or assist) and guide AI coding agents.
+
+Rules for the output (VERY IMPORTANT):
+- Output *only* the improved guard prompt (no preamble, no epilogue, no backticks).
+- Assure that both the Custom Guard Name and Custom Guard prompt are considered when drafting your enhanced custom guard prompt.
+- Keep the tone professional, precise, actionable.
+- Prefer structured sections, short bullets, and imperative voice.
+- Avoid UI/logic/copy prohibitions unless the user's intent or goal suggests them.
+- Always ensure: minimal changes, smallest diffs, clear scope, validation, and a short checklist.
+
+Suggested structure (adapt as needed):
+1) Objective — what outcomes the guard enforces
+2) Scope & Constraints — exact boundaries; files/areas if mentioned
+3) Safety & Conflicts — smallest diffs, confirm conflicts, stop if out-of-scope
+4) Verification — what to prove, quick checks/tests
+5) Output Format — diffs or artifacts the assistant must return
+
+If the user's text is already good, gently tighten and de-duplicate. Never invent product details. 
+If the user supplied "goal" and/or "tone", reflect them without changing substance.
+`;
+
+// --- Main handler
+Deno.serve(async (req: Request) => {
+  // CORS preflight
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: CORS });
+  }
+  if (req.method !== "POST") {
+    return bad("Use POST.", 405);
+  }
+  if (!OPENAI_API_KEY) {
+    return bad("Missing OPENAI_API_KEY.", 500);
+  }
+
+  // Optional auth (we don't block if unauthenticated; we just skip personalization)
+  const user = await getUserFromBearer(req);
+
+  // Parse body
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return bad("Invalid JSON.");
+  }
+  const raw = (body?.prompt ?? "").toString().trim();
+  const guardName = (body?.name ?? "").toString().trim();
+  const goal = (body?.goal ?? "").toString().trim();
+  const tone = (body?.tone ?? "").toString().trim();
+
+  if (!raw) {
+    return bad("Field 'prompt' is required.");
+  }
+  // lightweight size guard (Edge runtime budget)
+  if (raw.length > 8000) {
+    return bad("Prompt too large (>8000 chars). Please shorten.");
+  }
+
+  // Compose user message with any hints
+  const userMsg = [
+    guardName ? `Guard Name: ${guardName}` : "",
+    goal ? `Goal: ${goal}` : "",
+    tone ? `Tone: ${tone}` : "",
+    "",
+    "User Prompt:",
+    raw,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  // Call OpenAI (chat completions)
+  const payload = {
+    model: "gpt-4o-mini",
+    temperature: 0.3,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: userMsg },
+    ],
+  };
+
+  let resp: Response;
+  try {
+    resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${OPENAI_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    console.error("[ai-enhance] network error:", e);
+    return bad("OpenAI request failed.", 502);
+  }
+
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => "");
+    console.error("[ai-enhance] OpenAI error:", resp.status, txt);
+    return bad(`OpenAI error: ${resp.status}`, 502);
+  }
+
+  const data = await resp.json();
+  const choice = data?.choices?.[0]?.message?.content ?? "";
+  const enhanced = (choice || "").trim();
+
+  if (!enhanced) {
+    return bad("No content returned.", 502);
+  }
+
+  // Return enhanced prompt
+  return json({
+    enhanced,
+    model: data?.model ?? "gpt-4o-mini",
+    usage: data?.usage ?? null,
+    user_id: user?.id ?? null,
+  });
+});

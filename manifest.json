@@ -1,0 +1,154 @@
+{
+  "manifest_version": 3,
+  "name": "Viberly AI",
+  "short_name": "Viberly AI",
+  "version": "1.0.42",
+  "description": "Save and reuse your favorite prompts instantly inside Chrome.",
+  "icons": {
+    "16": "assets/active-pill-16.png",
+    "32": "assets/active-pill-32.png",
+    "48": "assets/active-pill-48.png",
+    "128": "assets/active-pill-128.png"
+  },
+  "permissions": [
+    "storage",
+    "identity",
+    "scripting",
+    "tabs",
+    "activeTab",
+    "windows"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "https://*.supabase.co/*",
+    "https://api.openai.com/*",
+    "https://viberly.ai/*",
+
+    "https://lovable.dev/*",
+    "https://*.lovable.dev/*",
+    "https://*.replit.com/*",
+    "https://bolt.new/*",
+    "https://*.base44.com/*",
+    "https://*.airtable.com/*",
+    "https://airtable.com/*",
+    "https://v0.dev/*",
+    "https://v0.app/*",
+    "https://vercel.com/v0/*",
+    "https://chatgpt.com/*",
+    "https://*.chatgpt.com/*",
+    "https://chat.openai.com/*",
+    "https://gemini.google.com/*",
+    "https://runwayml.com/*",
+    "https://*.runwayml.com/*",
+    "https://sora.chatgpt.com/*",
+    "https://*.sora.chatgpt.com/*",
+    "https://*.perplexity.ai/*",
+    "https://perplexity.ai/*",
+    "https://claude.ai/*",
+    "https://www.canva.com/*",
+    "https://canva.com/*",
+    "https://grok.com/*",
+    "https://bubble.io/*",
+    "https://*.bubble.io/*",
+    "https://midjourney.com/*",
+    "https://chat.deepseek.com/*",
+    "https://x.ai/*",
+    "https://aistudio.google.com/*",
+    "https://lindy.ai/*",
+    "https://www.lindy.ai/*",
+    "https://chat.lindy.ai/*",
+    "https://figma.com/*",
+    "https://www.figma.com/*",
+    "https://chat.mistral.ai/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Viberly",
+    "default_icon": {
+      "16": "assets/active-pill-16.png",
+      "32": "assets/active-pill-32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://lovable.dev/*",
+        "*://*.lovable.dev/*",
+        "*://*.replit.com/*",
+        "*://bolt.new/*",
+        "*://*.base44.com/*",
+        "*://*.airtable.com/*",
+        "https://airtable.com/*",
+        "*://v0.dev/*",
+        "*://v0.app/*",
+        "https://vercel.com/v0/*",
+        "https://chatgpt.com/*",
+        "https://*.chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "*://gemini.google.com/*",
+        "*://runwayml.com/*",
+        "*://*.runwayml.com/*",
+        "*://sora.chatgpt.com/*",
+        "*://*.sora.chatgpt.com/*",
+        "*://*.perplexity.ai/*",
+        "https://perplexity.ai/*",
+        "https://claude.ai/*",
+        "https://www.canva.com/*",
+        "https://canva.com/*",
+        "https://grok.com/*",
+        "*://bubble.io/*",
+        "*://*.bubble.io/*",
+        "https://midjourney.com/*",
+        "https://x.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://aistudio.google.com/*",
+        "https://lindy.ai/*",
+        "https://www.lindy.ai/*",
+        "https://chat.lindy.ai/*",
+        "https://figma.com/*",
+        "https://www.figma.com/*",
+        "https://chat.mistral.ai/*",
+        "https://app.heygen.com/*",
+        "https://dream-machine.lumalabs.ai/*"
+      ],
+      "js": ["src/boot.js", "src/ui/savehighlight.js", "src/ui/hud.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "auth.html",
+        "src/ui/hud.js",
+        "src/ui/hud_frame.html",
+        "src/ui/hud_frame.js",
+        "src/ui/quickmenu.js",
+        "src/ui/settings.js",
+        "src/ui/paywall.js",
+        "src/interceptsend.js",
+        "src/ui/ai-chat.js",
+        "src/ui/bug-buster.js",
+        "src/ui/screenshot.js",
+        "assets/*"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "commands": {
+    "open-marketplace": {
+      "suggested_key": { "default": "Ctrl+Shift+P", "mac": "Command+Shift+P" },
+      "description": "Open Marketplace in the Dashboard"
+    },
+    "capture-screenshot": {
+      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Open Viberly Screenshot overlay"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Signing you in…</title>
+<body style="background:#0f1116;color:#e5e7eb;font:13px system-ui">Signing you in…</body>
+
+<script>
+  // 1) Tell background to finish auth (state check + set session)
+  chrome.runtime.sendMessage(
+    { type: 'AUTH_REDIRECT', redirectUrl: location.href },
+    () => {
+      // 2) Try to return focus to the tab the user came from
+      chrome.storage.local.get('__vg_return_to', (bag) => {
+        const rt = bag && bag.__vg_return_to;
+        // Clean up this key no matter what
+        try { chrome.storage.local.remove('__vg_return_to'); } catch {}
+
+        if (rt && (rt.tabId || rt.url)) {
+          try {
+            // If the original tab still exists, activate it and focus its window
+            chrome.tabs.get(rt.tabId, (tab) => {
+              if (chrome.runtime.lastError || !tab) {
+                // Tab is gone — reopen the saved URL if we have one
+                if (rt.url) chrome.tabs.create({ url: rt.url });
+              } else {
+                chrome.tabs.update(rt.tabId, { active: true });
+                if (tab.windowId) chrome.windows.update(tab.windowId, { focused: true });
+              }
+            });
+          } catch {}
+        }
+      });
+
+      // 3) Give BG a moment to process, then close THIS auth tab
+      setTimeout(() => {
+        try { window.close(); } catch {}
+        try {
+          chrome.tabs.getCurrent((tab) => {
+            if (tab?.id) chrome.tabs.remove(tab.id);
+          });
+        } catch {}
+      }, 300);
+    }
+  );
+</script>

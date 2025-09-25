@@ -1,0 +1,169 @@
+// supabase/functions/bugbuster-summarize/index.ts
+// Summarizes the last ~10 chat messages via OpenAI and returns a structured summary.
+
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+
+// --- Env (same naming pattern as ai-enhance)
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY") ?? "";
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+// --- CORS / helpers (identical behavior to ai-enhance)
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type",
+};
+
+function json(body: unknown, init: number | ResponseInit = 200) {
+  const base = typeof init === "number" ? { status: init } : init;
+  return new Response(JSON.stringify(body), {
+    ...base,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...CORS,
+      ...(base?.headers ?? {}),
+    },
+  });
+}
+function bad(msg: string, code = 400) {
+  return json({ error: msg }, code);
+}
+
+// Optional: verify Supabase session (mirrors ai-enhance)
+async function getUserFromBearer(req: Request) {
+  try {
+    const auth = req.headers.get("authorization") || "";
+    const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "";
+    if (!token || !SUPABASE_URL || !SUPABASE_ANON_KEY) return null;
+    const supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: `Bearer ${token}` } },
+    });
+    const { data, error } = await supa.auth.getUser();
+    if (error || !data?.user) return null;
+    return data.user;
+  } catch {
+    return null;
+  }
+}
+
+// --- System prompt for Bug Buster (concise & deterministic)
+const SYSTEM_PROMPT = (site: string) =>
+  `
+You are Viberly "Bug Buster", a senior engineering triage agent.
+
+Summarize the most recent conversation between a developer and their code assistant on ${site}.
+OUTPUT STRICTLY IN THIS FORMAT:
+
+Issue: <one concise sentence>
+Evidence:
+- <2–4 short bullets with key clues or quotes>
+Suspects: <files/functions/modules if mentioned; otherwise "None mentioned">
+Next step: <the single most useful question or action to take first>
+`.trim();
+
+// Clamp, coerce shape, and keep the last N items
+function sanitizeMessages(input: unknown, limit = 10) {
+  if (!Array.isArray(input)) return [];
+  const clamp = (s: string) =>
+    (s || "").toString().replace(/\s+/g, " ").slice(0, 1800).trim();
+  const out: Array<{ role: "user" | "assistant"; text: string }> = [];
+  for (const m of input.slice(-limit)) {
+    const role: "user" | "assistant" =
+      m?.role === "assistant" ? "assistant" : "user";
+    const text = clamp(m?.text ?? "");
+    if (text) out.push({ role, text });
+  }
+  return out;
+}
+
+// --- Main handler (same Deno.serve style as ai-enhance)
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method !== "POST") return bad("Use POST.", 405);
+  if (!OPENAI_API_KEY) return bad("Missing OPENAI_API_KEY.", 500);
+
+  // Optional auth (not required to run)
+  const user = await getUserFromBearer(req);
+
+  // Parse & validate body
+  let body: any;
+  try {
+    body = await req.json();
+  } catch {
+    return bad("Invalid JSON.");
+  }
+
+  const site = (body?.site ?? "this site").toString();
+  const messages = sanitizeMessages(body?.messages);
+  if (!messages.length)
+    return bad("Field 'messages' is required (non-empty array).");
+
+  // Build OpenAI request (chat completions)
+  const payload = {
+    model: "gpt-4o-mini",
+    temperature: 0.2,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT(site) },
+      // Keep user payload compact: a single JSON blob with {site, messages}
+      { role: "user", content: JSON.stringify({ site, messages }) },
+    ],
+  };
+
+  // --- Call OpenAI with robust response handling
+  let resp: Response;
+  try {
+    resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${OPENAI_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (e) {
+    console.error("[bugbuster] network error:", e);
+    return bad("OpenAI request failed.", 502);
+  }
+
+  const rawText = await resp.text().catch(() => "");
+  let data: any = {};
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    // keep raw for debug
+  }
+
+  if (!resp.ok) {
+    console.error("[bugbuster] OpenAI error:", resp.status, rawText);
+    return json(
+      { error: data?.error?.message || `OpenAI ${resp.status}`, debug: rawText },
+      502
+    );
+  }
+
+  // Robust extraction: support different shapes and avoid empty summaries
+  const choices: any[] = Array.isArray(data?.choices) ? data.choices : [];
+  const primary = (choices[0]?.message?.content ?? "").trim();
+  const joined = choices
+    .map((c) => (c?.message?.content ?? ""))
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+  const legacy = (choices[0]?.text ?? "").trim(); // just in case
+
+  const summary = (primary || joined || legacy || "").trim();
+  if (!summary) {
+    console.error("[bugbuster] empty summary. data:", data);
+    return json({ error: "Empty summary from OpenAI", debug: rawText }, 502);
+  }
+
+  return json({
+    ok: true,
+    summary,
+    model: data?.model ?? "gpt-4o-mini",
+    usage: data?.usage ?? null,
+    user_id: user?.id ?? null,
+  });
+});

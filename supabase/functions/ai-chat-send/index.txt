@@ -1,0 +1,93 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+
+const OPENAI_API_KEY   = Deno.env.get("OPENAI_API_KEY") ?? "";
+const SUPABASE_URL     = Deno.env.get("SUPABASE_URL") ?? "";
+const SUPABASE_ANON_KEY= Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
+const CORS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type",
+};
+const json = (b:any,s=200)=>new Response(JSON.stringify(b),{status:s,headers:{"content-type":"application/json",...CORS}});
+const bad  = (m:string,s=400)=>json({error:m},s);
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok",{headers:CORS});
+  if (req.method !== "POST") return bad("Use POST.",405);
+  if (!OPENAI_API_KEY || !SUPABASE_URL || !SUPABASE_ANON_KEY) return bad("Missing env.",500);
+
+  const auth = req.headers.get("authorization") || "";
+  const token = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7) : "";
+  const supa = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+  });
+
+  let body:any; try { body = await req.json(); } catch { return bad("Invalid JSON."); }
+  const { session_id, site, user_text } = body || {};
+  if (!user_text || typeof user_text !== "string") return bad("Field 'user_text' required.");
+
+  // 1) resolve session
+  let sid = session_id as string | null;
+  if (!sid) {
+    const { data, error } = await supa
+      .from("ai_chat_sessions")
+      .insert({ site, title: site ? `Chat – ${site}` : "Chat" })
+      .select("id").single();
+    if (error) return bad(error.message, 500);
+    sid = data.id;
+  }
+
+  // 2) insert user message
+  let err1; await supa.from("ai_chat_messages")
+    .insert({ session_id: sid, role:'user', content:user_text })
+    .then(r=>{ err1 = r.error; });
+  if (err1) return bad(err1.message, 500);
+
+  // 3) fetch last ~20 messages for context
+  const { data: msgs, error: err2 } = await supa
+    .from("ai_chat_messages")
+    .select("role,content,created_at")
+    .eq("session_id", sid)
+    .order("created_at", { ascending: true })
+    .limit(20);
+  if (err2) return bad(err2.message,500);
+
+  // 4) call OpenAI (chat completions)
+  const payload = {
+    model: "gpt-4o-mini",
+    temperature: 0.2,
+    messages: [
+      { role:"system", content:"You are Viberly. Be concise, actionable, and code-ready when asked." },
+      ...msgs.map(m => ({ role: m.role as "user"|"assistant"|"system", content: m.content }))
+    ]
+  };
+
+  let resp:Response;
+  try {
+    resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method:"POST",
+      headers:{ "content-type":"application/json", authorization:`Bearer ${OPENAI_API_KEY}`},
+      body: JSON.stringify(payload)
+    });
+  } catch (e) { return bad("OpenAI request failed.",502); }
+
+  const raw = await resp.text(); let data:any={}; try{ data=JSON.parse(raw); }catch{}
+  if (!resp.ok) return json({ error: data?.error?.message || `OpenAI ${resp.status}`, debug: raw }, 502);
+
+  const assistant = (data?.choices?.[0]?.message?.content || "").trim();
+  if (!assistant) return bad("Empty assistant reply.",502);
+
+  // 5) store assistant reply + bump session updated_at
+  let err3; await supa.from("ai_chat_messages")
+    .insert({ session_id: sid, role:'assistant', content:assistant })
+    .then(r=>{ err3 = r.error; });
+  if (err3) return bad(err3.message,500);
+
+  await supa.from("ai_chat_sessions")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", sid);
+
+  return json({ ok:true, session_id: sid, assistant });
+});

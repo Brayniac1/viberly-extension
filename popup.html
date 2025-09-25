@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en" class="signed-out">
+<head>
+
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Viberly</title>
+
+
+<style>
+  /* Hide both views by default; popup.js will set html.signed-in / html.signed-out */
+  #authView { display: none; }
+  #accountView { display: none; }
+
+  html.signed-in  #accountView { display: block; }
+  html.signed-out #authView    { display: block; }
+</style>
+
+<style>
+  /* Auth mode (no animations; instant toggle) */
+  #authView[data-mode="default"] #zone1 { display:block; }
+  #authView[data-mode="default"] #zone2Form { display:none; }
+  #authView[data-mode="default"] #zone2LinkRow { display:block; }
+
+  #authView[data-mode="login"] #zone1 { display:none; }
+  #authView[data-mode="login"] #zone2Form { display:block; }
+  #authView[data-mode="login"] #zone2LinkRow { display:none; }
+</style>
+
+
+<style>
+  :root{
+    --bg: #0b0d13;
+    --panel: #0f1116;
+    --panel-border:#242634;
+    --text:#e5e7eb;
+    --muted:#a1a1aa;
+    --input:#0c0e13;
+    --input-border:#2a2a33;
+    --primary:#7c3aed;
+    --primary-pressed:#6a2edb;
+    --btn-bg:#1f1f26;
+    --btn-border:#2a2a33;
+    --ring: rgba(124,58,237,.35);
+    --danger:#ef4444;
+  }  /* ✅ close :root here */
+
+  /* popup account view: tighter bottom + consistent spacing */
+  #accountView .card{
+    /* top   right bottom left */
+    padding: 16px 16px 8px !important;   /* smaller bottom padding */
+    min-height: 0 !important;            /* kill any inherited min-height */
+  }
+  #accountView .stack{ gap: 8px !important; }          /* less vertical gap between rows */
+  /* Reserve the same vertical space even with no buttons inside */
+  #accountView .rowBtns{
+    margin: 6px 0 8px !important;
+    min-height: 40px;     /* same as button height */
+    gap: 10px;
+  }
+
+  #accountView .billingSpacer{
+    min-height: 40px;               /* same as .btn height set below */
+    border: 1px solid transparent;  /* keeps rhythm without showing anything */
+    border-radius: 10px;
+  }
+
+  /* Inline auth message */
+  .msg{
+    margin-top:8px;
+    padding:8px 10px;
+    font-size:12px;
+    border-radius:8px;
+    border:1px solid transparent;
+  }
+  .msg.err{
+    color:#fca5a5;                              /* light red text */
+    background:rgba(239,68,68,.12);             /* soft red bg   */
+    border-color:rgba(239,68,68,.35);
+  }
+  .msg.ok{
+    color:#86efac;                              /* light green text */
+    background:rgba(34,197,94,.12);             /* soft green bg    */
+    border-color:rgba(34,197,94,.35);
+  }
+
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#f6f7fb;
+      --panel:#ffffff;
+      --panel-border:#dfe3ec;
+      --text:#0e1117;
+      --muted:#5b6472;
+      --input:#ffffff;
+      --input-border:#d5dbe6;
+      --btn-bg:#f3f5fa;
+      --btn-border:#dfe3ec;
+      --ring: rgba(124,58,237,.25);
+    }
+  }
+</style>
+
+<style>
+html,body{
+  margin:0;
+  padding:0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+
+  /* Let the action popup auto-size to content (removes the blank bottom area) */
+  height:auto !important;
+  min-height:0 !important;
+}
+
+body{
+  display:flex;
+  justify-content:center;     /* horizontal centering */
+  align-items:flex-start;     /* top-justified */
+  overflow:visible;           /* avoid forcing extra scroll area */
+}
+
+
+/* Popup canvas size (typical 360 width ) */
+.wrap{
+  width: 360px;
+  max-width: 100%;
+  padding: 8px;               /* slightly tighter */
+  box-sizing: border-box;
+  margin-top: 6px;            /* less top gap to reduce perceived extra space */
+}
+
+/* Panel */
+.card{
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 16px 60px rgba(0,0,0,.35);
+}
+
+/* Header row: stack + center the wordmark and subline */
+.brand{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  margin-bottom:14px;
+  text-align:center;
+}
+
+/* Larger wordmark */
+.brand .logo{
+  display:block;
+  width:160px;
+  height:auto;
+}
+
+/* Subline style (only for auth) */
+.brand .sub{
+  font-size:12px;
+  color:var(--muted);
+}
+
+/* Hide the subline the moment we are signed in */
+html.signed-in .brand .sub{ display:none; }
+
+/* Screen-reader helper (keep if you use it) */
+.sr-only{
+  position:absolute!important;
+  width:1px!important; height:1px!important;
+  padding:0!important; margin:-1px!important;
+  overflow:hidden!important; clip:rect(0,0,0,0)!important;
+  white-space:nowrap!important; border:0!important;
+}
+
+.brand .title{ font-weight:700; font-size:14px; }  /* a11y only */
+
+/* Fields */
+label{ display:block; font-size:13px; margin:10px 0 6px; }
+.input{
+  width:100%; height:36px;
+  background: var(--input);
+  color: var(--text);
+  border:1px solid var(--input-border);
+  border-radius:10px;
+  padding: 0 12px;
+  outline:none;
+  box-sizing:border-box;
+}
+.input:focus{
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* Buttons */
+.btn{
+  width:100%; height:36px;
+  border-radius:10px; border:1px solid var(--btn-border);
+  background: var(--btn-bg); color: var(--text);
+  font-weight:600; font-size:13px;
+  display:inline-flex; align-items:center; justify-content:center;
+  cursor:pointer;
+}
+.btn.primary{
+  background: var(--primary);
+  border: 0; color: #fff;
+}
+.btn.primary:active{ background: var(--primary-pressed); }
+
+/* Google button – real logo + bigger height to match the Log in button */
+.btn.google{
+  display:flex; align-items:center; gap:10px;
+  height:40px;
+  background: var(--btn-bg);
+  border:1px solid var(--btn-border);
+  border-radius:10px;
+  justify-content:center;
+}
+
+/* Make all buttons the same height as Google/Login */
+.btn{ height:40px; }
+
+/* Layout breathing room for the account view */
+.stack{ display:flex; flex-direction:column; gap:14px; }
+.rowBtns{ display:flex; gap:10px; }
+
+/* Make the account card taller so it’s not cramped */
+#accountView .card{ min-height: auto; }
+
+/* Button looks */
+.btn.pro{ background: var(--primary); color:#fff; border:0; }
+.btn.basic{ background: var(--btn-bg); border:1px solid var(--btn-border); }
+.btn.neutral{ background: var(--btn-bg); border:1px solid var(--btn-border); }
+
+/* Ghost button for Logout (low attention) */
+.btn.ghost{
+  background: transparent;
+  border:1px solid #2a2a33;
+  color: var(--muted);
+}
+.btn.ghost:hover{
+  border-color:#3a3a45;
+  color:#c3c7d0;
+}
+
+/* Inside-button text weights */
+.btn .label{ font-weight:500; }
+.btn .price{ font-weight:700; }
+
+/* Nicer divider spacing like the screenshot */
+.hr{ margin:14px 0; }
+
+/* Link rows */
+.row { display:flex; align-items:center; gap:10px; }
+.muted { color: var(--muted); }
+.link{
+  color: var(--primary); font-weight:600; cursor:pointer;
+  text-decoration:none;
+}
+.link:hover{ text-decoration:underline; }
+
+/* Link rows */
+.row { display:flex; align-items:center; gap:10px; }
+.muted { color: var(--muted); }
+.link{
+  color: var(--primary); font-weight:600; cursor:pointer;
+  text-decoration:none;
+}
+.link:hover{ text-decoration:underline; }
+
+/* Subtle back-to-signup link in login mode */
+#authView[data-mode="login"] #showSignupTop {
+  color: var(--muted);
+  font-weight: 500;   /* lighter than bold */
+  text-decoration: none;
+  font-size: 13px;
+}
+#authView[data-mode="login"] #showSignupTop:hover {
+  color: var(--text); /* lighten slightly on hover */
+  text-decoration: underline;
+}
+
+.spacer{ height:10px; }
+.hr{
+  display:flex; align-items:center; gap:10px; margin:12px 0;
+  color:var(--muted); font-size:12px;
+}
+.hr:before, .hr:after{
+  content:"";
+  flex:1; height:1px; background: var(--panel-border);
+}
+
+/* Centered footer link */
+.footer{
+  text-align:center; margin-top: 12px;
+}
+</style>
+
+
+<!-- Team-block CSS (dark, branded, fits popup; full-width CTA) -->
+<style>
+  #blocked { display:none; }
+  #blocked .card {
+    padding: 20px;
+    border-radius: 16px;
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    box-shadow: 0 20px 70px rgba(0,0,0,.40);
+    color: var(--text);
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-height: 300px;            /* ↑ +20% height from 220px */
+  }
+  #blocked .brand {
+    display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:10px;
+  }
+  #blocked .brand .logo { width: 140px; height:auto; display:block; }
+
+  #blocked h1 { font-size: 18px; margin: 6px 0 8px; color: var(--text); }
+  #blocked p  { margin: 0 0 12px; color: var(--muted); line-height: 1.45; }
+
+  #blocked .list { margin: 10px 0 16px; font-size: 13px; color: var(--muted); }
+  #blocked .list div { margin: 2px 0; }
+
+/* stack CTA + logout vertically with consistent spacing */
+#blocked .actions { margin-top: 6px; display:flex; flex-direction:column; gap:8px; }
+
+#blocked .btn-link {
+  display:block;
+  width:100%;
+  text-align:center;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--text);
+  font-weight: 700; font-size: 14px;
+  text-decoration: none;
+  box-sizing: border-box;
+  margin: 0 auto;
+}
+
+#blocked .btn-link.primary { background: var(--primary); border: 0; color: #fff; }
+
+/* 👇 ghost variant = transparent fill, gray border, gray text */
+#blocked .btn-link.ghost{
+  background: transparent;
+  border: 1px solid var(--btn-border);
+  color: var(--muted);
+}
+#blocked .btn-link.ghost:hover{
+  border-color:#3a3a45;
+  color:#c3c7d0;
+}
+
+</style>
+
+
+<!-- Phase 5: slider styles -->
+<style>
+  /* Theme tokens for the toggle */
+  :root{
+    /* OFF state */
+    --toggle-off-bg: #2b2f3a;         /* slate-800 / graphite */
+    --toggle-off-knob: #c2c7d1;       /* muted light knob */
+    --toggle-shadow: 0 1px 0 rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.06);
+
+    /* ON state — soft, desaturated purple derived from --primary */
+    --toggle-on-fallback: #5b4aa0;    /* fallback if color-mix not supported */
+    --toggle-on-bg: color-mix(in srgb, var(--primary) 62%, #1a1c24);
+    --toggle-on-knob: #aeb5c2;        /* darker gray for ON knob */
+    --toggle-focus: var(--ring);      /* your existing focus ring */
+  }
+
+  @media (prefers-color-scheme: light){
+    :root{
+      --toggle-off-bg: #e5e7ef;
+      --toggle-off-knob: #6b7280;
+      --toggle-on-fallback: #7e6ad8;
+      --toggle-on-bg: color-mix(in srgb, var(--primary) 55%, #ffffff);
+      --toggle-on-knob: #ffffff;
+    }
+  }
+
+  .vg-switch{ position:relative; display:inline-block; width:44px; height:24px; }
+  .vg-switch input{ opacity:0; width:0; height:0; }
+
+  .vg-slider{
+    position:absolute; inset:0; border-radius:999px; transition:background .2s ease, box-shadow .2s ease;
+    background: var(--toggle-off-bg);
+    box-shadow: var(--toggle-shadow);
+  }
+  .vg-slider:before{
+    content:""; position:absolute; height:18px; width:18px; left:3px; top:3px; border-radius:50%;
+    background: var(--toggle-off-knob);
+    box-shadow: var(--toggle-shadow);
+    transition: transform .22s ease, background .2s ease, box-shadow .2s ease;
+  }
+
+  /* ON state */
+  .vg-switch input:checked + .vg-slider{
+    background: var(--toggle-on-fallback);
+    background: var(--toggle-on-bg);
+  }
+  .vg-switch input:checked + .vg-slider:before{
+    transform: translateX(20px);
+    background: var(--toggle-on-knob);
+  }
+
+  /* Focus (keyboard nav) */
+  .vg-switch input:focus-visible + .vg-slider{
+    outline: 2px solid var(--toggle-focus);
+    outline-offset: 2px;
+  }
+
+  /* Read-only look (Phase 5) */
+  .vg-switch input:disabled + .vg-slider{ opacity: .85; }
+</style>
+
+</head>
+<body>
+
+
+  <div class="wrap">
+   <!-- ================= AUTH VIEW ================= -->
+<section id="authView" data-mode="default">
+  <div class="card">
+    <div class="brand">
+      <img class="logo" src="../../assets/Viberly-transparent.svg" alt="Viberly" />
+      <div class="title sr-only">Viberly</div>
+    </div>
+
+    <!-- ===== Zone 1 (Create Account – HERO) ===== -->
+    <div id="zone1">
+      <div style="text-align:center; margin-bottom:10px;">
+        <div style="font-weight:700; font-size:16px; margin-bottom:6px;">New to Viberly?</div>
+        <div style="color:var(--muted); font-size:13px;">Get started in seconds.</div>
+      </div>
+      <button id="signup" class="btn primary">Create Free Account</button>
+    </div>
+
+    <!-- Quiet link row (visible in default mode only) -->
+    <div id="zone2LinkRow" class="footer" style="margin-top:14px;">
+      <span class="muted">Already have an account?</span>
+      <a id="showLogin" class="link" href="#" style="margin-left:6px;">Log in</a>
+    </div>
+
+    <!-- ===== Zone 2 (Login – expands, hides Zone 1) ===== -->
+    <div id="zone2Form">
+      <!-- Back to signup link (only in login mode) -->
+      <div style="margin-bottom:8px;">
+        <a id="showSignupTop" class="link" href="#">← Create Free Account</a>
+      </div>
+
+      <label for="email">Email</label>
+      <input id="email" class="input" type="email" placeholder="you@domain.com" autocomplete="email" />
+
+      <label for="password">Password</label>
+      <input id="password" class="input" type="password" placeholder="••••••••" autocomplete="current-password" />
+
+      <div class="spacer"></div>
+      <a id="forgot" class="link" href="#">Forgot your password?</a>
+
+      <div class="spacer"></div>
+      <button id="signin" class="btn primary">Log in</button>
+
+      <!-- inline auth message (hidden by default) -->
+      <div id="authMsg" class="msg" hidden></div>
+
+      <div class="spacer"></div>
+      <button id="magic" class="btn">Send me a magic link</button>
+    </div>
+  </div>
+</section>
+
+
+
+
+	<!-- ================= ACCOUNT VIEW (hidden by default) ================= -->
+	<section id="accountView">
+
+	  <div class="card stack">
+
+	 <div class="brand">
+	  <img class="logo" src="assets/Viberly-transparent.svg" alt="Viberly" />
+	  <div class="title sr-only">Viberly</div>
+	</div>
+
+
+
+
+	    <div class="muted" style="font-size:12px;">Account</div>
+	    <div id="acctEmail"
+	         style="padding:10px;border:1px solid var(--input-border);border-radius:10px;background:var(--input);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+ 	     you@domain.com
+ 	   </div>
+
+	    <!-- Plan + usage -->
+	    <div style="font-size:12px;color:var(--muted)">
+	      Plan: <span id="acctPlan">–</span> • Usage: <span id="acctUsage">–</span>
+	    </div>
+
+
+
+<!-- Site Access (read-only; Phase 5) -->
+<div class="hr">Site access</div>
+<div id="siteAccessStatic" style="font-size:12px; color:var(--muted);">
+  <div>Current site: <span id="saHost">—</span></div>
+
+  <div style="margin-top:8px; display:flex; align-items:center; justify-content:space-between;">
+    <div>Viberly on this site: <span id="saState">—</span></div>
+    <label class="vg-switch" title="Toggle Viberly on this site">
+      <input id="saToggle" type="checkbox" />
+      <span class="vg-slider"></span>
+    </label>
+  </div>
+
+  <!-- NEW: subtle hint (hidden by default; shown when ON) -->
+  <div id="saHint" class="muted" style="font-size:12px; margin-top:6px; display:none;">
+    If you don’t see the Viberly button appear right away, please refresh this page.
+  </div>
+</div>
+
+
+
+	    <!-- Upgrade buttons (removed) — keep row as fixed-height spacer to preserve popup height -->
+		<div class="rowBtns" aria-hidden="true"></div>
+
+
+		<!-- Manage Billing (removed) — keep fixed-height spacer so modal height stays the same -->
+		<div class="billingSpacer" aria-hidden="true"></div>
+
+	    <!-- Logout (ghost button) -->
+	    <button id="logout" class="btn ghost">Log out</button>
+
+	  </div>
+	</section>
+
+
+<!-- ==== BLOCKED TEAM VIEW (hidden by default; shown by popup.js) ==== -->
+<section id="blocked" aria-hidden="true">
+  <div class="card">
+    <div class="brand">
+      <img class="logo" src="assets/Viberly-transparent.svg" alt="Viberly" />
+    </div>
+
+    <h1 id="blocked-title">Subscription expired</h1>
+    <p id="blocked-body">Your team’s subscription has expired. To re-subscribe, check out our latest pricing.</p>
+
+    <div class="list">
+      <div>Team: <strong id="blocked-team-name">—</strong></div>
+      <div>Admin: <strong id="blocked-admin-name">—</strong> <a id="blocked-admin-email" href="#" target="_blank" rel="noopener" style="display:none; margin-left:6px;">(email)</a></div>
+    </div>
+
+
+<div class="actions">
+  <a id="blocked-pricing-link" class="btn-link primary" href="https://viberly.ai/pricing" target="_blank" rel="noopener">View pricing</a>
+  <button id="blocked-signout" class="btn-link ghost" type="button">Log out</button>
+</div>
+
+
+  </div>
+</section>
+
+
+
+
+
+  <!-- Supabase UMD (path matches your project: /vendor/supabase.umd.js) -->
+  <script defer src="vendor/supabase.umd.js"></script>
+  <!-- Your logic; defer so it runs after the DOM is parsed -->
+  <script defer src="popup.js"></script>
+</body>
+</html>
