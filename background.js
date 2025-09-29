@@ -870,9 +870,11 @@ const RESET_PASSWORD_REDIRECT = "https://viberly.ai/reset-password";
 
 // === AI Chat · Supabase Edge calls ===
 const AI_SEND_URL = `${VG_SUPABASE_URL}/functions/v1/ai-chat-send`;
-
 const AI_SUMMARIZE_URL = `${VG_SUPABASE_URL}/functions/v1/ai-chat-summarize`;
 const AI_CREATE_URL = `${VG_SUPABASE_URL}/functions/v1/ai-chat-create-session`;
+
+// === AI Enhance (composer) · Supabase Edge call ===
+const AI_ENHANCE_FN = "ai-enhance"; // invoked via client.functions.invoke
 
 async function __aiChatCall(url, payload) {
   // include Supabase access token so RLS auth.uid() works
@@ -896,6 +898,28 @@ async function __aiChatCall(url, payload) {
   const out = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(out?.error || `HTTP ${r.status}`);
   return out;
+}
+
+// Call the 'ai-enhance' Edge Function using supabase-js (handles auth header)
+async function __aiEnhanceInvoke(payload) {
+  // payload: { text, surface?, tone?, length?, site? }
+  const { data, error } = await client.functions.invoke(AI_ENHANCE_FN, {
+    body: payload,
+  });
+  if (error) {
+    // Try to surface response details if present
+    let status,
+      text = "";
+    try {
+      status = error?.context?.response?.status;
+    } catch {}
+    try {
+      text = await error?.context?.response?.text();
+    } catch {}
+    const msg = text || error?.message || `EF_STATUS_${status || "UNKNOWN"}`;
+    throw new Error(msg);
+  }
+  return data || {};
 }
 
 // Optional: read transcript to resume a session
@@ -1511,6 +1535,7 @@ async function handleMessage(msg, _host = "", sender = null) {
       if (error) throw error;
       return { ok: true, data };
     }
+
     case "SIGN_IN": {
       const { email, password } = msg;
       const { data, error } = await client.auth.signInWithPassword({
@@ -1692,6 +1717,44 @@ async function handleMessage(msg, _host = "", sender = null) {
         return { ok: true };
       } catch (e) {
         console.warn("[BG/VG_SAVE_HIGHLIGHT] throw:", e);
+        return { ok: false, error: String(e?.message || e) };
+      }
+    }
+
+    // === AI Enhance: composer selection → Edge → enhanced text
+    case "VG_AI_ENHANCE": {
+      try {
+        const raw = (msg?.payload?.text || "").toString();
+        const surface = msg?.payload?.surface || "composer";
+
+        // Require login (RLS)
+        const {
+          data: { session },
+        } = await client.auth.getSession();
+        if (!session?.user?.id) return { ok: false, error: "NOT_SIGNED_IN" };
+
+        // Basic guards (mirror content script limits)
+        const text = raw.trim();
+        if (text.length < 16) return { ok: false, error: "TEXT_TOO_SHORT" };
+        if (text.length > 8000) return { ok: false, error: "TEXT_TOO_LONG" };
+
+        // Optional site hint for EF heuristics
+        let site = "";
+        try {
+          site = new URL(sender?.url || "").hostname || "";
+        } catch {}
+        // EF expects `prompt` (not `text`). Keep `surface` for future analytics.
+        const payload = { prompt: text, site, surface };
+
+        const out = await __aiEnhanceInvoke(payload); // returns { enhanced, ... }
+        const enhanced =
+          out && typeof out.enhanced === "string" ? out.enhanced : "";
+
+        if (!enhanced) return { ok: false, error: "EMPTY_ENHANCED_TEXT" };
+
+        return { ok: true, text: enhanced, meta: out.meta || null };
+      } catch (e) {
+        console.warn("[BG] VG_AI_ENHANCE error:", e);
         return { ok: false, error: String(e?.message || e) };
       }
     }
