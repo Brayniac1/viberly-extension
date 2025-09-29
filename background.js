@@ -105,6 +105,13 @@ const VG_ALLOWED_URLS = [
   "https://chat.mistral.ai/*",
   "https://app.heygen.com/*",
   "https://dream-machine.lumalabs.ai/*",
+  "https://www.notion.so/*",
+  "https://higgsfield.ai/*",
+  "https://www.framer.com/*",
+  "https://gamma.app/*",
+  "https://pika.art/*",
+  "https://app.clickup.com/*",
+  "https://zapier.com/*",
 ];
 
 // Persist Supabase session in Chrome storage (MV3-safe)
