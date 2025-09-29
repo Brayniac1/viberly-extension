@@ -898,6 +898,28 @@ async function __aiChatCall(url, payload) {
   return out;
 }
 
+// Call the 'ai-enhance' Edge Function using supabase-js (handles auth header)
+async function __aiEnhanceInvoke(payload) {
+  // payload: { text, surface?, tone?, length?, site? }
+  const { data, error } = await client.functions.invoke(AI_ENHANCE_FN, {
+    body: payload,
+  });
+  if (error) {
+    // Try to surface response details if present
+    let status,
+      text = "";
+    try {
+      status = error?.context?.response?.status;
+    } catch {}
+    try {
+      text = await error?.context?.response?.text();
+    } catch {}
+    const msg = text || error?.message || `EF_STATUS_${status || "UNKNOWN"}`;
+    throw new Error(msg);
+  }
+  return data || {};
+}
+
 // Optional: read transcript to resume a session
 async function __aiGetMessages(session_id, limit = 50) {
   const { data, error } = await client

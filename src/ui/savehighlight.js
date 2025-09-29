@@ -9,6 +9,52 @@
   const Z         = 2147483600;
   const PILL_TEXT = "Save to Viberly";
 
+  // Do not show the Save pill in composers (editor inputs). Enhance owns that surface.
+  const BLOCK_IN_COMPOSER = true;
+
+  // Heuristics to identify “composer” nodes across sites
+  const COMPOSER_SELECTORS = [
+    'textarea',
+    'input[type="text"]',
+    'input[type="search"]',
+    'input[type="email"]',
+    'input[type="url"]',
+    '[contenteditable="true"]',
+    '[role="textbox"]',
+    '.ProseMirror',            // many rich text editors
+    '.ql-editor',              // Quill
+    '.monaco-editor',          // VS Code-style
+    '[data-slate-editor="true"]'
+  ];
+
+  function isComposerElement(el) {
+    if (!el || el.nodeType !== 1) return false;
+    const tag = el.tagName;
+    if (tag === 'TEXTAREA') return true;
+    if (tag === 'INPUT') {
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      return ['text','search','email','url','tel','password'].includes(t);
+    }
+    const ce = el.getAttribute && el.getAttribute('contenteditable');
+    if (ce && ce.toLowerCase() === 'true') return true;
+    if (el.getAttribute && el.getAttribute('role') === 'textbox') return true;
+    try {
+      if (el.matches && COMPOSER_SELECTORS.some(sel => el.matches(sel))) return true;
+    } catch {}
+    return false;
+  }
+
+  function nodeIsInsideComposer(node) {
+    for (let n = node; n; n = n.parentNode) {
+      if (isComposerElement(n)) return true;
+      if (n === document || n === document.documentElement) break;
+    }
+    const ae = document.activeElement;
+    if (isComposerElement(ae)) return true;
+    return false;
+  }
+
+
   // Length guardrails (avoid noise / huge blobs)
   const MIN_LEN = 16;
   const MAX_LEN = 10000;
@@ -187,6 +233,13 @@ function getSelectionInfo() {
 
   const text = String(sel).trim();
   if (text.length < MIN_LEN || text.length > MAX_LEN) return null;
+
+  // If selection is inside a composer, do NOT show Save (Enhance owns that surface)
+  if (BLOCK_IN_COMPOSER) {
+    const anchor = sel.anchorNode || sel.focusNode || null;
+    if (anchor && nodeIsInsideComposer(anchor)) return null;
+  }
+
 
   const rng = sel.getRangeAt(0).cloneRange();
   let rect = null;

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Viberly AI",
   "short_name": "Viberly AI",
-  "version": "1.0.44",
+  "version": "1.0.45",
   "description": "Save and reuse your favorite prompts instantly inside Chrome.",
   "icons": {
     "16": "assets/active-pill-16.png",
@@ -115,11 +115,13 @@
         "https://www.figma.com/*",
         "https://chat.mistral.ai/*",
         "https://app.heygen.com/*",
-        "https://dream-machine.lumalabs.ai/*"
+        "https://dream-machine.lumalabs.ai/*",
+        "https://chat.mistral.ai/*"
       ],
       "js": [
         "src/boot.js",
         "src/ui/savehighlight.js",
+        "src/ui/enhancehighlight.js",
         "src/ui/hud.js",
         "src/usage/counter.js"
       ],
