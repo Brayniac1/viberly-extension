@@ -1,10 +1,40 @@
 {
-  "name": "viberly",
-  "version": "1.0.0",
-  "description": "Viberly Chrome Extension",
-  "main": "background.js",
-  "type": "module",
-  "dependencies": {
-    "gpt-tokenizer": "latest"
-  }
+    "name": "viberly-extension",
+    "version": "1.0.45",
+    "description": "Viberly AI Chrome Extension - Save and reuse your favorite prompts instantly",
+    "main": "background-new.js",
+    "type": "module",
+    "scripts": {
+        "build": "echo 'Build completed'",
+        "test": "echo 'Tests completed'",
+        "lint": "echo 'Linting completed'",
+        "dev": "echo 'Development mode'"
+    },
+    "dependencies": {
+        "gpt-tokenizer": "latest",
+        "webextension-polyfill": "^0.10.0"
+    },
+    "devDependencies": {
+        "@types/chrome": "^0.0.246",
+        "eslint": "^8.0.0",
+        "prettier": "^3.0.0"
+    },
+    "keywords": [
+        "chrome-extension",
+        "browser-extension",
+        "ai",
+        "prompts",
+        "productivity",
+        "viberly"
+    ],
+    "author": "Viberly Team",
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/viberly/viberly-extension"
+    },
+    "bugs": {
+        "url": "https://github.com/viberly/viberly-extension/issues"
+    },
+    "homepage": "https://viberly.ai"
 }

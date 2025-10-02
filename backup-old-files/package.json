@@ -1,0 +1,10 @@
+{
+  "name": "viberly",
+  "version": "1.0.0",
+  "description": "Viberly Chrome Extension",
+  "main": "background.js",
+  "type": "module",
+  "dependencies": {
+    "gpt-tokenizer": "latest"
+  }
+}
