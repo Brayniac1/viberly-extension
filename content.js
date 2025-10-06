@@ -156,12 +156,36 @@ chrome.runtime.onMessage.addListener((msg) => {
       // 2) Start boot (auth + DB placement + HUD)
       await import(chrome.runtime.getURL('src/boot.js'));
 
-    } catch (e) {
-      console.error('[VG] content bootstrap error:', e);
-    }
+// 2.5) Kick one-time AI Profile snapshot on this page load
+try {
+  // top window only; guard against double-runs
+  if (window.top === window && !window.__VG_SNAPSHOT_KICKED__) {
+    window.__VG_SNAPSHOT_KICKED__ = true;
+
+    const host = location.hostname.toLowerCase().replace(/^www\./, '');
+    const path = location.pathname || '/';
+
+    // ask BG if this page is enabled; if yes, run snapshot (BG gates capture_enabled)
+    chrome.runtime.sendMessage(
+      { type: 'COUNTER_HANDSHAKE', payload: { host, path } },
+      (res) => {
+        if (res && res.ok && res.enabled) {
+          chrome.runtime.sendMessage(
+            { type: 'AI_PROFILE:RUN_SNAPSHOT' },
+            () => void chrome.runtime.lastError
+          );
+        }
+      }
+    );
+  }
+} catch {}
+
+// continue outer bootstrap try/catch
+} catch (e) {
+  console.error('[VG] content bootstrap error:', e);
+}
   })();
 })();
-
 
 
 // === Paywall + Billing message handlers (robust aliases) ===
@@ -263,4 +287,3 @@ chrome.runtime.onMessage.addListener((msg) => {
     console.warn('[VG][content] paywall listener wiring failed', e);
   }
 })();
-

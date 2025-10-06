@@ -175,6 +175,16 @@ const SVG_CAMERA = `
   <circle cx="12" cy="13" r="4"></circle>
 </svg>`;
 
+// Chat bubble icon (used by AI Chat button)
+const SVG_CHAT_BUBBLE = `
+<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
+     fill="none" stroke="currentColor" stroke-width="1.75"
+     stroke-linecap="round" stroke-linejoin="round"
+     preserveAspectRatio="xMidYMid meet" style="display:block">
+  <rect x="4" y="4" width="16" height="12" rx="3" ry="3" vector-effect="non-scaling-stroke"></rect>
+  <path d="M8 16 L4 20 L4 16" vector-effect="non-scaling-stroke"></path>
+</svg>`;
+
 
 
 
@@ -1600,27 +1610,32 @@ Object.assign(hdrActions.style, {
 	}
 
 
-	// Sparkle (AI Chat) — left
-	const sparkleBtn = mkCircleBtn({
+	// AI Chat (left) — chat bubble icon
+	const chatBtn = mkCircleBtn({
 	  id: 'vg-ai-chat-btn',
 	  title: 'AI Chat',
+	  svg: SVG_CHAT_BUBBLE
+	});
+
+
+	// AI Enhance (right) — sparkle icon
+	const enhanceBtn = mkCircleBtn({
+	  id: 'vg-ai-enhance-btn',
+	  title: 'AI Enhance',
 	  svg: `
 	    <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
 	         stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
 	         preserveAspectRatio="xMidYMid meet" aria-hidden="true">
 	      <g vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision">
-	        <!-- central sparkle (diamond with flares) -->
 	        <path d="M12 3 L14.5 9.5 L21 12 L14.5 14.5 L12 21 L9.5 14.5 L3 12 L9.5 9.5 Z"></path>
-	        <!-- small sparkle top-right -->
 	        <path d="M18 6 L19 8.5 L21.5 9.5 L19 10.5 L18 13 L17 10.5 L14.5 9.5 L17 8.5 Z"></path>
-	        <!-- small sparkle bottom-left -->
 	        <path d="M6 12 L6.7 13.8 L8.5 14.5 L6.7 15.2 L6 17 L5.3 15.2 L3.5 14.5 L5.3 13.8 Z"></path>
 	      </g>
 	    </svg>`
 	});
 
 	
-	// Bug (Bug Buster) — right
+	// Bug Buster button (parked; kept for future reactivation)
 	const bugBtnCircle = mkCircleBtn({
 	  id: 'vg-bugbuster-btn',
 	  title: 'Bug Buster',
@@ -1643,10 +1658,11 @@ Object.assign(hdrActions.style, {
 	      </g>
 	    </svg>`
 	});
+	// NOTE: bugBtnCircle is intentionally not added to hdrActions so the feature stays parked.
 
 
 	// Lazy-load ai-chat.js, then open the modal and close the menu
-	sparkleBtn.addEventListener('click', async (e) => {
+	chatBtn.addEventListener('click', async (e) => {
 	  e.preventDefault(); e.stopPropagation();
 	  try {
 	    if (typeof window.openAiChatModal !== 'function') {
@@ -1660,37 +1676,36 @@ Object.assign(hdrActions.style, {
 	});
 	
 	// Optional: prefetch on first hover to make initial open snappier
-	sparkleBtn.addEventListener('mouseenter', () => {
+	chatBtn.addEventListener('mouseenter', () => {
 	  if (typeof window.openAiChatModal !== 'function') {
 	    import(chrome.runtime.getURL('src/ui/ai-chat.js')).catch(()=>{});
 	  }
 	}, { once: true });
 
-	
-	// Lazy-load bug-buster.js, then open the flow and close the menu
-	bugBtnCircle.addEventListener('click', async (e) => {
+	// AI Enhance → enhancehighlight engine
+	enhanceBtn.addEventListener('click', async (e) => {
 	  e.preventDefault(); e.stopPropagation();
+	  try { closeMenu(); } catch {}
 	  try {
-	    if (typeof window.openBugBusterFlow !== 'function') {
-	      await import(chrome.runtime.getURL('src/ui/bug-buster.js'));
+	    if (typeof window.vgEnhanceComposerAll !== 'function') {
+	      await import(chrome.runtime.getURL('src/ui/enhancehighlight.js'));
 	    }
-	    try { closeMenu(); } catch {}
-	    window.openBugBusterFlow();
+	    await window.vgEnhanceComposerAll?.();
 	  } catch (err) {
-	    console.warn('[VG] Bug Buster load failed', err);
+	    console.warn('[VG] AI Enhance load/exec failed', err);
 	  }
 	});
-	
-	// Optional: prefetch on first hover
-	bugBtnCircle.addEventListener('mouseenter', () => {
-	  if (typeof window.openBugBusterFlow !== 'function') {
-	    import(chrome.runtime.getURL('src/ui/bug-buster.js')).catch(()=>{});
+
+	// Prefetch enhance engine on hover
+	enhanceBtn.addEventListener('mouseenter', () => {
+	  if (typeof window.vgEnhanceComposerAll !== 'function') {
+	    import(chrome.runtime.getURL('src/ui/enhancehighlight.js')).catch(() => {});
 	  }
 	}, { once: true });
 
-	
-hdrActions.appendChild(sparkleBtn);
-hdrActions.appendChild(bugBtnCircle);
+
+hdrActions.appendChild(chatBtn);
+hdrActions.appendChild(enhanceBtn);
 
 
 /* === Phase 2: Screenshot button → overlay stub (lazy-loaded) === */
@@ -1839,8 +1854,8 @@ function attach(target, label){
 	    window.addEventListener('resize', () => { if (tip.style.display === 'block') positionFor(target); });
 	  }
 
-attach(sparkleBtn, 'AI Chat');
-attach(bugBtnCircle, 'Bug Buster');
+attach(chatBtn, 'AI Chat');
+attach(enhanceBtn, 'AI Enhance');
 if (shotBtn) attach(shotBtn, 'Screenshot');  // Phase 1 tooltip
 attach(gearBtn, 'Dashboard');
 
@@ -2138,6 +2153,10 @@ footer.appendChild(btnInsert);
   document.body.appendChild(back);
   back.focus?.();
 }
+
+try {
+  window.__VG_OPEN_PROMPT_PREVIEW = openPromptPreview;
+} catch {}
 
 function closePromptPreview() {
   try { window.__VG_PREVIEW_OPEN = false; } catch {}

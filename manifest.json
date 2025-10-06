@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Viberly AI",
   "short_name": "Viberly AI",
-  "version": "1.0.45",
+  "version": "1.0.46",
   "description": "Save and reuse your favorite prompts instantly inside Chrome.",
   "icons": {
     "16": "assets/active-pill-16.png",
@@ -128,6 +128,7 @@
         "src/boot.js",
         "src/ui/savehighlight.js",
         "src/ui/enhancehighlight.js",
+        "src/ui/slashcommands.js",
         "src/ui/hud.js",
         "src/usage/counter.js"
       ],
@@ -145,6 +146,7 @@
         "src/ui/quickmenu.js",
         "src/ui/settings.js",
         "src/ui/paywall.js",
+        "src/ui/slashcommands.js",
         "src/interceptsend.js",
         "src/ui/ai-chat.js",
         "src/ui/bug-buster.js",
