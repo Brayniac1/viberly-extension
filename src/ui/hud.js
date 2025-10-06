@@ -164,12 +164,16 @@
       // Single-click → open
       if (m.type === "PILL_CLICK") {
         try {
-          chrome.runtime.sendMessage({ type: "AUTH_STATUS" }, (snap) => {
+          browser.runtime.sendMessage({ type: "AUTH_STATUS" }).then((snap) => {
             const signed = !!snap?.signedIn;
             if (!signed) {
-              chrome.runtime.sendMessage({ type: "OPEN_POPUP" }, () => {});
+              browser.runtime
+                .sendMessage({ type: "OPEN_POPUP" })
+                .then(() => {});
             } else {
-              chrome.runtime.sendMessage({ type: "VG_QM_TOGGLE" }, () => {});
+              browser.runtime
+                .sendMessage({ type: "VG_QM_TOGGLE" })
+                .then(() => {});
             }
           });
         } catch {}
@@ -306,17 +310,16 @@
             const path = location.pathname || "/";
 
             // Persist override as WINDOW-FIXED by setting anchor_corner + dx/dy
-            chrome.runtime.sendMessage(
-              {
+            browser.runtime
+              .sendMessage({
                 type: "VG_SAVE_PILL_POS",
                 host,
                 path,
                 dx: Math.round(dxPx),
                 dy: Math.round(dyPx),
                 anchor_corner: corner,
-              },
-              () => void chrome.runtime.lastError
-            );
+              })
+              .then(() => void browser.runtime.lastError);
 
             // Update local placement immediately so next paint uses window-fixed
             const p = window.__VG_DB_PLACEMENT || {};
@@ -724,17 +727,16 @@
             const host = location.hostname.toLowerCase().replace(/^www\./, "");
             const path = location.pathname || "/";
 
-            chrome.runtime.sendMessage(
-              {
+            browser.runtime
+              .sendMessage({
                 type: "VG_SAVE_PILL_POS",
                 host,
                 path,
                 dx: Math.round(dxStore),
                 dy: Math.round(dyStore),
                 anchor_corner: corner,
-              },
-              () => void chrome.runtime.lastError
-            );
+              })
+              .then(() => void browser.runtime.lastError);
 
             const p = window.__VG_DB_PLACEMENT || {};
             window.__VG_DB_PLACEMENT = {
@@ -797,7 +799,7 @@
 
     // Seed from BG SoT so first paint matches reality (no storage/auth reads here)
     try {
-      chrome.runtime.sendMessage({ type: "AUTH_STATUS" }, (snap) => {
+      browser.runtime.sendMessage({ type: "AUTH_STATUS" }).then((snap) => {
         window.__VG_SIGNED_IN_GLOBAL = !!snap?.signedIn;
         // (No DOM write here; HUD_READY handler below will do the first PAINT_AUTH)
       });
@@ -842,15 +844,15 @@
       frame.__VG_ICONS__ = { iconIdle: idle, iconActive: active };
 
       // Load packaged HTML (no inline JS) → CSP-safe
-      frame.src = chrome.runtime.getURL("src/ui/hud_frame.html");
+      frame.src = browser.runtime.getURL("src/ui/hud_frame.html");
 
       // Always repaint auth state whenever the iframe reloads (e.g., after tab idle/discard)
       frame.addEventListener("load", () => {
         const icons = frame.__VG_ICONS__ || {};
         const iconIdle =
-          icons.iconIdle || chrome.runtime.getURL("assets/inactive-pill.svg");
+          icons.iconIdle || browser.runtime.getURL("assets/inactive-pill.svg");
         const iconActive =
-          icons.iconActive || chrome.runtime.getURL("assets/active-pill.svg");
+          icons.iconActive || browser.runtime.getURL("assets/active-pill.svg");
         const p = window.__VG_DB_PLACEMENT || {};
         const pillSize = vgSafeSize(p.pill_size);
         try {
@@ -876,9 +878,11 @@
           // Paint immediately so the icon shows even if DB placement isn't ready yet.
           const icons = frame.__VG_ICONS__ || {};
           const iconIdle =
-            icons.iconIdle || chrome.runtime.getURL("assets/inactive-pill.svg");
+            icons.iconIdle ||
+            browser.runtime.getURL("assets/inactive-pill.svg");
           const iconActive =
-            icons.iconActive || chrome.runtime.getURL("assets/active-pill.svg");
+            icons.iconActive ||
+            browser.runtime.getURL("assets/active-pill.svg");
 
           const p = window.__VG_DB_PLACEMENT || {};
           const pillSize = vgSafeSize(p.pill_size);
@@ -929,9 +933,9 @@
       const signed = !!window.__VG_SIGNED_IN_GLOBAL;
       const stored = frame.__VG_ICONS__ || {};
       const iconIdle =
-        stored.iconIdle || chrome.runtime.getURL("assets/inactive-pill.svg");
+        stored.iconIdle || browser.runtime.getURL("assets/inactive-pill.svg");
       const iconActive =
-        stored.iconActive || chrome.runtime.getURL("assets/active-pill.svg");
+        stored.iconActive || browser.runtime.getURL("assets/active-pill.svg");
 
       frame.contentWindow?.postMessage(
         {
@@ -1450,10 +1454,10 @@
             pillSize,
             iconIdle:
               icons.iconIdle ||
-              chrome.runtime.getURL("assets/inactive-pill.svg"),
+              browser.runtime.getURL("assets/inactive-pill.svg"),
             iconActive:
               icons.iconActive ||
-              chrome.runtime.getURL("assets/active-pill.svg"),
+              browser.runtime.getURL("assets/active-pill.svg"),
           },
           "*"
         );
@@ -2017,7 +2021,7 @@
   // CLOSES window.__VG_PLACE_HUD__
 
   // === Live repaint on auth changes (purple/gray without refresh)
-  chrome.runtime.onMessage.addListener((msg) => {
+  browser.runtime.onMessage.addListener((msg) => {
     if (msg?.type !== "VG_AUTH_CHANGED") return;
 
     const signed = !!msg.signedIn;
@@ -2035,9 +2039,9 @@
 
     const icons = frame.__VG_ICONS__ || {};
     const iconIdle =
-      icons.iconIdle || chrome.runtime.getURL("assets/inactive-pill.svg");
+      icons.iconIdle || browser.runtime.getURL("assets/inactive-pill.svg");
     const iconActive =
-      icons.iconActive || chrome.runtime.getURL("assets/active-pill.svg");
+      icons.iconActive || browser.runtime.getURL("assets/active-pill.svg");
 
     // Derive current pixel size from frame width or DB row
     const currentSz =

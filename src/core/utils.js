@@ -17,12 +17,12 @@ const FUNCTION_URL_PORTAL =
 const storage = {
   getItem: (k) =>
     new Promise((res) =>
-      chrome.storage.local.get([k], (out) => res(out[k] ?? null))
+      browser.storage.local.get([k]).then((out) => res(out[k] ?? null))
     ),
   setItem: (k, v) =>
-    new Promise((res) => chrome.storage.local.set({ [k]: v }, res)),
+    new Promise((res) => browser.storage.local.set({ [k]: v }).then(res)),
   removeItem: (k) =>
-    new Promise((res) => chrome.storage.local.remove([k], res)),
+    new Promise((res) => browser.storage.local.remove([k]).then(res)),
 };
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -44,10 +44,9 @@ async function syncSessionToBackground() {
     const rt = session?.refresh_token;
     if (!at || !rt) return; // nothing to push
 
-    chrome.runtime.sendMessage(
-      { type: "SET_SESSION", access_token: at, refresh_token: rt },
-      (r) => console.log("[popup→bg] SET_SESSION →", r)
-    );
+    browser.runtime
+      .sendMessage({ type: "SET_SESSION", access_token: at, refresh_token: rt })
+      .then((r) => console.log("[popup→bg] SET_SESSION →", r));
   } catch (e) {
     console.warn("[popup→bg] SET_SESSION failed", e);
   }
@@ -172,7 +171,7 @@ async function startCheckout(tier /* 'basic' | 'pro' */) {
   const { url } = await r.json();
   // open Stripe Checkout in a new tab
   try {
-    chrome.tabs.create({ url });
+    browser.tabs.create({ url });
   } catch {
     window.open(url, "_blank");
   }
@@ -199,7 +198,7 @@ async function openPortal() {
   }
   const { url } = await r.json();
   try {
-    chrome.tabs.create({ url });
+    browser.tabs.create({ url });
   } catch {
     window.open(url, "_blank");
   }
@@ -233,9 +232,9 @@ async function openPortal() {
       }
     }
 
-    if (!session && chrome?.storage?.local) {
+    if (!session && browser?.storage?.local) {
       // Manually pull the persisted session written by Supabase into chrome.storage
-      chrome.storage.local.get(null, async (all) => {
+      browser.storage.local.get(null).then(async (all) => {
         try {
           const sbKey = Object.keys(all).find(
             (k) => k.startsWith("sb-") && typeof all[k] === "string"
@@ -290,7 +289,7 @@ async function openPortal() {
 // First render: trust background first, then let Supabase hydrate
 document.addEventListener("DOMContentLoaded", () => {
   // Hide both views initially (CSS already hides), then decide quickly:
-  chrome.runtime.sendMessage({ type: "AUTH_STATUS" }, async (r) => {
+  browser.runtime.sendMessage({ type: "AUTH_STATUS" }).then(async (r) => {
     const signed = !!r?.signedIn;
 
     // Set HTML class so CSS shows the right view immediately
@@ -311,10 +310,10 @@ const btnLogout = $("logout");
 // Open Settings modal on the Billing tab
 $("manageBilling")?.addEventListener("click", () => {
   // ask the active tab to open Settings -> Billing
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+  browser.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
     const id = tabs?.[0]?.id;
     if (!id) return;
-    chrome.tabs.sendMessage(id, { type: "VG_OPEN_BILLING" });
+    browser.tabs.sendMessage(id, { type: "VG_OPEN_BILLING" });
   });
 });
 
@@ -458,8 +457,8 @@ linkForgot?.addEventListener("click", async (ev) => {
       return;
     }
 
-    const redirectTo = chrome.runtime.id
-      ? `https://${chrome.runtime.id}.chromiumapp.org/reset-finish`
+    const redirectTo = browser.runtime.id
+      ? `https://${browser.runtime.id}.chromiumapp.org/reset-finish`
       : undefined;
     const { error } = await db.auth.resetPasswordForEmail(email, {
       redirectTo,
@@ -481,8 +480,8 @@ btnGoogle?.addEventListener("click", async () => {
   try {
     lock(btnGoogle, true);
 
-    const redirectTo = chrome.runtime.id
-      ? `https://${chrome.runtime.id}.chromiumapp.org/oauth/callback`
+    const redirectTo = browser.runtime.id
+      ? `https://${browser.runtime.id}.chromiumapp.org/oauth/callback`
       : undefined;
 
     const { error } = await db.auth.signInWithOAuth({
@@ -514,9 +513,9 @@ btnLogout?.addEventListener("click", async () => {
 
     // Tell background to clear its session and broadcast to all tabs
     try {
-      chrome.runtime.sendMessage({ type: "SIGN_OUT" }, (r) =>
-        console.log("[popup→bg] SIGN_OUT →", r)
-      );
+      browser.runtime
+        .sendMessage({ type: "SIGN_OUT" })
+        .then((r) => console.log("[popup→bg] SIGN_OUT →", r));
     } catch (_) {}
 
     await renderAuthState(); // swap back to auth view
@@ -569,7 +568,7 @@ async function openCheckout({ priceId, tier, mode = "subscription" } = {}) {
     const { url } = await res.json();
     if (url) {
       // Open Stripe Checkout
-      chrome.tabs.create({ url });
+      browser.tabs.create({ url });
     } else {
       console.error("[checkout] no URL returned from function");
     }

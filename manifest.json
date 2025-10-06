@@ -122,6 +122,7 @@
         "https://zapier.com/*"
       ],
       "js": [
+        "vendor/browser-polyfill.js",
         "src/boot.js",
         "src/ui/savehighlight.js",
         "src/ui/enhancehighlight.js",
@@ -135,6 +136,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "vendor/browser-polyfill.js",
         "auth.html",
         "src/ui/hud.js",
         "src/ui/hud_frame.html",

@@ -2,23 +2,24 @@
 (() => {
   if (window.openBugBusterFlow) return; // idempotent
 
-
-	  // Turn Bug Buster off without deleting anything.
-	  const BUG_BUSTER_DISABLED = true;
-
+  // Turn Bug Buster off without deleting anything.
+  const BUG_BUSTER_DISABLED = true;
 
   // ---------- tiny utils ----------
   const sendBG = (msg) =>
     new Promise((res) => {
-      try { chrome.runtime.sendMessage(msg, (r) => res(r)); }
-      catch { res({ ok:false, error:'bridge error' }); }
+      try {
+        browser.runtime.sendMessage(msg).then((r) => res(r));
+      } catch {
+        res({ ok: false, error: "bridge error" });
+      }
     });
 
   const siteHost = () => location.host;
 
   // Lightweight, safe collector for last N visible messages on page
   async function collectLastMessages(n = 10) {
-    const norm = (t) => (t || '').replace(/\s+/g, ' ').trim();
+    const norm = (t) => (t || "").replace(/\s+/g, " ").trim();
     let nodes = [];
     try {
       const sel = `
@@ -28,17 +29,23 @@
         article, .prose, [class*="prose"], [class*="markdown"]
       `;
       nodes = Array.from(document.querySelectorAll(sel));
-      if (!nodes.length) nodes = Array.from(document.querySelectorAll('p,li,pre,blockquote'));
+      if (!nodes.length)
+        nodes = Array.from(document.querySelectorAll("p,li,pre,blockquote"));
     } catch {}
     const out = [];
     for (const el of nodes.slice(-250)) {
-      const txt = norm(el.innerText || el.textContent || '');
+      const txt = norm(el.innerText || el.textContent || "");
       if (!txt || txt.length < 16) continue;
-      const roleAttr = (el.getAttribute?.('data-message-role') || '').toLowerCase();
-      const role = roleAttr.includes('assistant') ? 'assistant'
-                : roleAttr.includes('user') ? 'user'
-                : (el.className || '').toLowerCase().includes('assistant') ? 'assistant'
-                : 'user';
+      const roleAttr = (
+        el.getAttribute?.("data-message-role") || ""
+      ).toLowerCase();
+      const role = roleAttr.includes("assistant")
+        ? "assistant"
+        : roleAttr.includes("user")
+        ? "user"
+        : (el.className || "").toLowerCase().includes("assistant")
+        ? "assistant"
+        : "user";
       out.push({ role, text: txt.slice(0, 4000) });
       if (out.length >= n) break;
     }
@@ -51,14 +58,18 @@
   function bbOpenAnalyzingModal() {
     if (__BB_WAIT_HOST) return __BB_WAIT_HOST;
 
-    const host = document.createElement('div');
+    const host = document.createElement("div");
     Object.assign(host.style, {
-      position:'fixed', inset:'0', zIndex:2147483647,
-      display:'flex', alignItems:'center', justifyContent:'center',
-      background:'rgba(0,0,0,.55)'
+      position: "fixed",
+      inset: "0",
+      zIndex: 2147483647,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "rgba(0,0,0,.55)",
     });
 
-    const box = document.createElement('div');
+    const box = document.createElement("div");
     box.style.cssText = `
       width:min(560px,92vw);
       background:#0f1116; color:#e5e7eb;
@@ -103,48 +114,58 @@
     document.body.appendChild(host);
     __BB_WAIT_HOST = host;
 
-    box.querySelector('#bb-x')?.addEventListener('click', bbCloseAnalyzingModal);
-    box.querySelector('#bb-cancel')?.addEventListener('click', bbCloseAnalyzingModal);
+    box
+      .querySelector("#bb-x")
+      ?.addEventListener("click", bbCloseAnalyzingModal);
+    box
+      .querySelector("#bb-cancel")
+      ?.addEventListener("click", bbCloseAnalyzingModal);
     return host;
   }
 
   function bbSetAnalyzingMessage(text) {
-    const el = __BB_WAIT_HOST?.querySelector('#bb-msg');
+    const el = __BB_WAIT_HOST?.querySelector("#bb-msg");
     if (el) el.textContent = text;
   }
   function bbSetRetryBusy(on) {
-    const btn = __BB_WAIT_HOST?.querySelector('#bb-retry');
+    const btn = __BB_WAIT_HOST?.querySelector("#bb-retry");
     if (btn) {
-      btn.classList.toggle('busy', !!on);
-      btn.textContent = on ? 'Working…' : 'Retry';
+      btn.classList.toggle("busy", !!on);
+      btn.textContent = on ? "Working…" : "Retry";
     }
   }
   function bbCloseAnalyzingModal() {
-    try { __BB_WAIT_HOST?.remove(); } catch {}
+    try {
+      __BB_WAIT_HOST?.remove();
+    } catch {}
     __BB_WAIT_HOST = null;
   }
-
-
 
   // ---------- Coming soon modal ----------
   let __BB_SOON_HOST = null;
 
   function bbCloseComingSoonModal() {
-    try { __BB_SOON_HOST?.remove(); } catch {}
+    try {
+      __BB_SOON_HOST?.remove();
+    } catch {}
     __BB_SOON_HOST = null;
   }
 
   function bbOpenComingSoonModal() {
     if (__BB_SOON_HOST) return __BB_SOON_HOST;
 
-    const host = document.createElement('div');
+    const host = document.createElement("div");
     Object.assign(host.style, {
-      position:'fixed', inset:'0', zIndex:2147483647,
-      display:'flex', alignItems:'center', justifyContent:'center',
-      background:'rgba(0,0,0,.55)'
+      position: "fixed",
+      inset: "0",
+      zIndex: 2147483647,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "rgba(0,0,0,.55)",
     });
 
-    const box = document.createElement('div');
+    const box = document.createElement("div");
     box.style.cssText = `
       width:min(560px,92vw);
       background:#0f1116; color:#e5e7eb;
@@ -181,36 +202,47 @@
     __BB_SOON_HOST = host;
 
     const close = () => bbCloseComingSoonModal();
-    box.querySelector('#bb-soon-x')?.addEventListener('click', close);
-    box.querySelector('#bb-soon-close')?.addEventListener('click', close);
-    host.addEventListener('click', (e) => { if (e.target === host) close(); });
+    box.querySelector("#bb-soon-x")?.addEventListener("click", close);
+    box.querySelector("#bb-soon-close")?.addEventListener("click", close);
+    host.addEventListener("click", (e) => {
+      if (e.target === host) close();
+    });
 
     // Esc to close
-    const onEsc = (e) => { if (e.key === 'Escape') { close(); window.removeEventListener('keydown', onEsc, true); } };
-    window.addEventListener('keydown', onEsc, true);
+    const onEsc = (e) => {
+      if (e.key === "Escape") {
+        close();
+        window.removeEventListener("keydown", onEsc, true);
+      }
+    };
+    window.addEventListener("keydown", onEsc, true);
 
     return host;
   }
 
-
-
   // ---------- Intake modal (prefilled summary) ----------
   let __BB_INTAKE_HOST = null;
 
-  function openBugBusterModal(prefilledSummary = '') {
+  function openBugBusterModal(prefilledSummary = "") {
     if (__BB_INTAKE_HOST) return;
 
-    const host = document.createElement('div');
+    const host = document.createElement("div");
     Object.assign(host.style, {
-      position:'fixed', inset:'0', zIndex:2147483646,
-      display:'flex', alignItems:'center', justifyContent:'center',
-      background:'rgba(0,0,0,.55)'
+      position: "fixed",
+      inset: "0",
+      zIndex: 2147483646,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "rgba(0,0,0,.55)",
     });
-    host.addEventListener('click', (e) => { if (e.target === host) closeBugBusterModal(); });
+    host.addEventListener("click", (e) => {
+      if (e.target === host) closeBugBusterModal();
+    });
     document.body.appendChild(host);
     __BB_INTAKE_HOST = host;
 
-    const box = document.createElement('div');
+    const box = document.createElement("div");
     box.style.cssText = `
       width:min(920px,94vw); max-height:86vh; overflow:auto;
       background:#0f1116; color:#e5e7eb;
@@ -249,25 +281,27 @@
     `;
     host.replaceChildren(box);
 
-    box.querySelector('#bb-sum').textContent = prefilledSummary || 'No summary.';
-    box.querySelector('#bb-i-x').onclick = closeBugBusterModal;
-    box.querySelector('#bb-i-cancel').onclick = closeBugBusterModal;
+    box.querySelector("#bb-sum").textContent =
+      prefilledSummary || "No summary.";
+    box.querySelector("#bb-i-x").onclick = closeBugBusterModal;
+    box.querySelector("#bb-i-cancel").onclick = closeBugBusterModal;
 
     // “Start” here is a placeholder hook: persist a simple record if desired.
-    box.querySelector('#bb-i-start').onclick = () => {
+    box.querySelector("#bb-i-start").onclick = () => {
       // You can wire this to open AI Chat or store a session shell if needed.
       closeBugBusterModal();
-      alert('Bug Buster started. (Hook this to your next step, e.g., open AI Chat.)');
+      alert(
+        "Bug Buster started. (Hook this to your next step, e.g., open AI Chat.)"
+      );
     };
   }
 
   function closeBugBusterModal() {
-    try { __BB_INTAKE_HOST?.remove(); } catch {}
+    try {
+      __BB_INTAKE_HOST?.remove();
+    } catch {}
     __BB_INTAKE_HOST = null;
   }
-
-
-
 
   // ---------- Public flow ----------
   window.openBugBusterFlow = async function openBugBusterFlow() {
@@ -282,10 +316,10 @@
     bbOpenAnalyzingModal();
 
     // Wire Retry inside the analyzing modal
-    const retryBtn = __BB_WAIT_HOST?.querySelector('#bb-retry');
+    const retryBtn = __BB_WAIT_HOST?.querySelector("#bb-retry");
     if (retryBtn && !retryBtn.__wired) {
       retryBtn.__wired = true;
-      retryBtn.addEventListener('click', runSummarize);
+      retryBtn.addEventListener("click", runSummarize);
     }
 
     // Kick first run
@@ -294,19 +328,26 @@
     async function runSummarize() {
       try {
         bbSetRetryBusy(true);
-        bbSetAnalyzingMessage('Analyzing the last 10 messages…');
+        bbSetAnalyzingMessage("Analyzing the last 10 messages…");
 
         const last10 = await collectLastMessages(10);
-        const payload = last10.length ? last10 : [{ role:'user', text:'(No visible chat messages found on page)' }];
+        const payload = last10.length
+          ? last10
+          : [
+              {
+                role: "user",
+                text: "(No visible chat messages found on page)",
+              },
+            ];
 
         const ans = await sendBG({
-          type: 'BUG_BUSTER:SUMMARIZE',
+          type: "BUG_BUSTER:SUMMARIZE",
           site: siteHost(),
-          messages: payload
+          messages: payload,
         });
 
-        let summaryText = '';
-        if (typeof ans === 'string') summaryText = ans.trim();
+        let summaryText = "";
+        if (typeof ans === "string") summaryText = ans.trim();
         else if (ans?.summary) summaryText = String(ans.summary).trim();
         else if (ans?.text) summaryText = String(ans.text).trim();
 
@@ -314,14 +355,13 @@
           bbCloseAnalyzingModal();
           openBugBusterModal(summaryText);
         } else {
-          bbSetAnalyzingMessage('Could not analyze. Try again?');
+          bbSetAnalyzingMessage("Could not analyze. Try again?");
           bbSetRetryBusy(false);
         }
       } catch (e) {
-        bbSetAnalyzingMessage('Could not analyze. Try again?');
+        bbSetAnalyzingMessage("Could not analyze. Try again?");
         bbSetRetryBusy(false);
       }
     }
   };
-
 })();
