@@ -2279,12 +2279,14 @@ async function handleMessage(msg, _host = "", sender = null) {
       try {
         const winId = sender?.tab?.windowId ?? undefined; // current window by default
         const dataUrl = await new Promise((resolve, reject) => {
-          browser.tabs.captureVisibleTab(winId, { format: "png" }, (url) => {
-            const err = browser.runtime.lastError;
-            if (err || !url)
-              return reject(new Error(err?.message || "capture failed"));
-            resolve(url);
-          });
+          browser.tabs
+            .captureVisibleTab(winId, { format: "png" })
+            .then((url) => {
+              const err = browser.runtime.lastError;
+              if (err || !url)
+                return reject(new Error(err?.message || "capture failed"));
+              resolve(url);
+            });
         });
         return { ok: true, dataUrl };
       } catch (e) {
