@@ -1,7 +1,7 @@
 // background.js (MV3 service worker)
 
-importScripts("./vendor/browser-polyfill.js");
-importScripts("./vendor/supabase.umd.js");
+// importScripts("./vendor/browser-polyfill.js");
+// importScripts("./vendor/supabase.umd.js");
 
 // ---- Debug flag ----
 const DEBUG = false;
@@ -116,7 +116,7 @@ const VG_ALLOWED_URLS = [
   "https://zapier.com/*",
 ];
 
-// Persist Supabase session in Chrome storage (MV3-safe)
+// Persist Supabase session in browser storage (MV3-safe)
 const sbStorage = {
   getItem: (k) => browser.storage.local.get([k]).then((o) => o?.[k] ?? null),
 
@@ -125,7 +125,7 @@ const sbStorage = {
   removeItem: (k) => browser.storage.local.remove([k]),
 };
 
-// Create Supabase client (uses Chrome storage so session survives service-worker sleep)
+// Create Supabase client (uses browser storage so session survives service-worker sleep)
 const client = supabase.createClient(VG_SUPABASE_URL, VG_SUPABASE_ANON_KEY, {
   auth: {
     storage: sbStorage, // ← IMPORTANT: persist in browser.storage.local
@@ -597,11 +597,11 @@ async function __vgBroadcastAuth(signed) {
     for (const t of tabs) {
       browser.tabs
         .sendMessage(t.id, { type: "VG_AUTH_CHANGED", signedIn: !!signed })
-        .catch(() => {}); // Simply ignore the error // chrome.runtime.lastError
+        .catch(() => {}); // Simply ignore the error // browser.runtime.lastError
 
       browser.tabs
         .sendMessage(t.id, { type: "AUTH_STATUS_PUSH", signedIn: !!signed })
-        .catch(() => {}); // Simply ignore the error // chrome.runtime.lastError
+        .catch(() => {}); // Simply ignore the error // browser.runtime.lastError
     }
   } catch (e) {
     console.warn("[BG] __vgBroadcastAuth failed:", e);

@@ -14,7 +14,8 @@
     "storage",
     "scripting",
     "tabs",
-    "activeTab"
+    "activeTab",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "<all_urls>",
@@ -62,7 +63,11 @@
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'"
   },
   "background": {
-    "service_worker": "background.js"
+    "scripts": [
+      "vendor/browser-polyfill.js",
+      "vendor/supabase.umd.js",
+      "background.js"
+    ]
   },
   "action": {
     "default_popup": "popup.html",

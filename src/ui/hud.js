@@ -14,6 +14,13 @@
         const blob = await res.blob();
         return new File([blob], filename, { type: blob.type || "image/png" });
       }
+      function isFirefox() {
+        try {
+          return navigator.userAgent.includes("Firefox");
+        } catch {
+          return false;
+        }
+      }
       function findComposer() {
         const ae = document.activeElement;
         if (
@@ -104,6 +111,7 @@
           const IS_CHATGPT =
             /(^|\.)chatgpt\.com$|(^|\.)chat\.openai\.com$/.test(location.host);
           const IS_CLAUDE = /(^|\.)claude\.ai$/.test(location.host);
+          const IS_FIREFOX = isFirefox();
 
           const file = await dataURLtoFile(dataUrl, filename);
           const target = findComposer();
@@ -111,18 +119,60 @@
           let ok = false;
 
           if (target) {
-            // For ChatGPT and Claude, only try paste to avoid dual insertion
-            if (IS_CHATGPT || IS_CLAUDE) {
-              ok = tryPaste(target, file);
+            // Firefox does not allow constructing DataTransfer/ClipboardEvent with payloads
+            // so synthetic paste/drop will silently fail. Provide a Firefox-specific path.
+            if (IS_FIREFOX) {
+              if (target.isContentEditable) {
+                try {
+                  const img = document.createElement("img");
+                  img.src = dataUrl;
+                  img.alt = filename;
+                  img.style.maxWidth = "100%";
+                  const sel = window.getSelection();
+                  const rg = sel && sel.rangeCount ? sel.getRangeAt(0) : null;
+                  if (rg) {
+                    rg.deleteContents();
+                    rg.insertNode(img);
+                    rg.setStartAfter(img);
+                    rg.setEndAfter(img);
+                    sel.removeAllRanges();
+                    sel.addRange(rg);
+                  } else {
+                    target.appendChild(img);
+                  }
+                  ok = true;
+                } catch {
+                  ok = false;
+                }
+              } else if ("value" in target) {
+                // Plain inputs/textareas cannot embed images → insert a markdown link
+                try {
+                  const start = target.selectionStart ?? target.value.length;
+                  const end = target.selectionEnd ?? target.value.length;
+                  const text = `![screenshot](${dataUrl})`;
+                  target.value =
+                    target.value.slice(0, start) +
+                    text +
+                    target.value.slice(end);
+                  target.dispatchEvent(new Event("input", { bubbles: true }));
+                  ok = true;
+                } catch {
+                  ok = false;
+                }
+              }
             } else {
-              // For other sites, try paste first, then drop if paste fails
-              ok = tryPaste(target, file);
-              if (!ok) {
-                const el = target.isContentEditable
-                  ? target
-                  : document.querySelector('[contenteditable="true"]') ||
-                    target;
-                ok = tryDrop(el, file);
+              // Chromium path: sites often accept synthetic paste/drop to trigger uploads
+              if (IS_CHATGPT || IS_CLAUDE) {
+                ok = tryPaste(target, file);
+              } else {
+                ok = tryPaste(target, file);
+                if (!ok) {
+                  const el = target.isContentEditable
+                    ? target
+                    : document.querySelector('[contenteditable="true"]') ||
+                      target;
+                  ok = tryDrop(el, file);
+                }
               }
             }
           }
