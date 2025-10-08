@@ -402,35 +402,48 @@
         return;
       }
 
-      // contentEditable / ProseMirror range replacement
+      // contentEditable / ProseMirror range replacement (DOM fragment insert)
       if (
         snap.kind === "ce" &&
         snap.range &&
         typeof snap.range.deleteContents === "function"
       ) {
         const r = snap.range;
-        r.deleteContents();
 
-        const html = formatEnhancedToHTML(enhanced);
-        const container = document.createElement("div");
-        container.innerHTML = html;
+        try {
+          // Remove current selection
+          r.deleteContents();
 
-        const frag = document.createDocumentFragment();
-        while (container.firstChild) frag.appendChild(container.firstChild);
-        const lastNode = frag.lastChild;
+          // Build a fragment from our lightweight HTML (paragraphs/lists preserved visually)
+          const html = formatEnhancedToHTML(enhanced);
+          const container = document.createElement("div");
+          container.innerHTML = html;
 
-        r.insertNode(frag);
+          const frag = document.createDocumentFragment();
+          while (container.firstChild) {
+            frag.appendChild(container.firstChild);
+          }
 
-        // caret after inserted content
-        const after = document.createRange();
-        if (lastNode && lastNode.parentNode) after.setStartAfter(lastNode);
-        else after.setStart(r.endContainer, r.endOffset);
-        after.collapse(true);
+          // Keep a handle to the last inserted node to place the caret after it
+          const lastNode = frag.lastChild;
+          r.insertNode(frag);
 
-        const sel = window.getSelection?.();
-        if (sel) {
-          sel.removeAllRanges();
-          sel.addRange(after);
+          // Move caret to just after the inserted content
+          const after = document.createRange();
+          if (lastNode && lastNode.parentNode) {
+            after.setStartAfter(lastNode);
+          } else {
+            after.setStart(r.endContainer, r.endOffset);
+          }
+          after.collapse(true);
+
+          const sel = window.getSelection?.();
+          if (sel) {
+            sel.removeAllRanges();
+            sel.addRange(after);
+          }
+        } catch (e) {
+          console.warn("[VG/enhance] contenteditable replacement failed:", e);
         }
         return;
       }
@@ -868,5 +881,300 @@
       } catch {}
     }
   }
+
+  // ===== enhancing overlay (anchored to composer) =====
+  function __showComposerEnhancing(anchorElOrRect) {
+    const id = "__vg_enh_progress__";
+    try {
+      document.getElementById(id)?.remove();
+    } catch {}
+    const host = document.createElement("div");
+    host.id = id;
+    Object.assign(host.style, {
+      position: "fixed",
+      left: "0px",
+      top: "0px",
+      width: "280px",
+      background: "#0f1116",
+      color: "#e5e7eb",
+      border: "1px solid #2a2a33",
+      borderRadius: "12px",
+      boxShadow: "0 14px 42px rgba(0,0,0,.45)",
+      zIndex: String(Z + 3),
+      padding: "12px",
+    });
+
+    const label = document.createElement("div");
+    label.textContent = "Enhancing…";
+    label.style.cssText =
+      "font:600 13px Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin-bottom:8px;";
+    host.appendChild(label);
+
+    // indeterminate bar
+    const barWrap = document.createElement("div");
+    Object.assign(barWrap.style, {
+      height: "6px",
+      background: "#141823",
+      border: "1px solid #252833",
+      borderRadius: "999px",
+      overflow: "hidden",
+    });
+    const bar = document.createElement("div");
+    Object.assign(bar.style, {
+      width: "40%",
+      height: "100%",
+      background: "#7c3aed",
+      borderRadius: "999px",
+      transform: "translateX(-100%)",
+    });
+    barWrap.appendChild(bar);
+    host.appendChild(barWrap);
+
+    // simple animation (no keyframes needed)
+    let dir = 1;
+    let pos = -100;
+    const tick = () => {
+      pos += dir * 3;
+      if (pos >= 160) {
+        dir = -1;
+      }
+      if (pos <= -100) {
+        dir = 1;
+      }
+      bar.style.transform = "translateX(" + pos + "%)";
+      host.__raf = requestAnimationFrame(tick);
+    };
+    host.__raf = requestAnimationFrame(tick);
+
+    document.body.appendChild(host);
+
+    function rectOf(a) {
+      if (!a) return null;
+      if (typeof a.left === "number") return a;
+      if (a.getBoundingClientRect) return a.getBoundingClientRect();
+      return null;
+    }
+    function place() {
+      const r = rectOf(anchorElOrRect) || {
+        left: innerWidth / 2 - 140,
+        top: innerHeight / 2 - 24,
+        width: 280,
+        height: 48,
+      };
+      const w = host.offsetWidth || 280;
+      const h = host.offsetHeight || 40;
+      const cx = Math.round(r.left + r.width / 2);
+      const cy = Math.round(r.top + r.height / 2);
+      const left = Math.max(
+        6,
+        Math.min(cx - Math.round(w / 2), innerWidth - w - 6)
+      );
+      const top = Math.max(
+        12,
+        Math.min(cy - Math.round(h / 2), innerHeight - h - 12)
+      );
+      host.style.left = left + "px";
+      host.style.top = top + "px";
+    }
+    place();
+
+    const onVV = () => place();
+    try {
+      window.addEventListener("resize", onVV, { passive: true });
+    } catch {}
+    try {
+      window.addEventListener("scroll", onVV, { passive: true });
+    } catch {}
+
+    return {
+      close() {
+        try {
+          cancelAnimationFrame(host.__raf);
+        } catch {}
+        try {
+          window.removeEventListener("resize", onVV, { passive: true });
+        } catch {}
+        try {
+          window.removeEventListener("scroll", onVV, { passive: true });
+        } catch {}
+        try {
+          host.remove();
+        } catch {}
+      },
+    };
+  }
+
+  // ===== Public triggers (selection & full-composer) + in-flight guard =====
+  let __VG_ENH_INFLIGHT = false;
+
+  async function __vgCallEnhance(text, surface) {
+    return new Promise((resolve) => {
+      try {
+        browser.runtime
+          .sendMessage({
+            type: "VG_AI_ENHANCE",
+            payload: {
+              text: String(text || ""),
+              surface: String(surface || "composer"),
+            },
+          })
+          .then((r) => {
+            const err = browser.runtime.lastError;
+            if (err) {
+              console.warn("[VG/enhance] lastError:", err.message);
+              resolve({ ok: false, error: "BACKGROUND_UNAVAILABLE" });
+            } else {
+              resolve(r || null);
+            }
+          });
+      } catch (e) {
+        console.warn("[VG/enhance] sendMessage throw:", e);
+        resolve({ ok: false, error: String(e?.message || e) });
+      }
+    });
+  }
+
+  function __makeFullComposerSnapshot(el, originalText) {
+    // Textarea/Input full-range snapshot
+    if (el && "value" in el) {
+      const len = (el.value || "").length;
+      try {
+        el.focus?.();
+      } catch {}
+      return { kind: "input", el, start: 0, end: len, original: originalText };
+    }
+    // contentEditable/PM full-range snapshot
+    const doc = (el && el.ownerDocument) || document;
+    const r = doc.createRange();
+    r.selectNodeContents(el || doc.body);
+    return { kind: "ce", range: r, original: originalText };
+  }
+
+  function __readComposerText() {
+    // Prefer DB selector if available
+    const dbSel =
+      (window.__VG_DB_PLACEMENT &&
+        window.__VG_DB_PLACEMENT.composer_selector) ||
+      "";
+    let el = null;
+    if (dbSel) {
+      try {
+        el = document.querySelector(dbSel) || null;
+      } catch {}
+    }
+    if (!el) {
+      // Fallbacks: CE/PM → textarea/input
+      el =
+        document.activeElement && isComposerElement(document.activeElement)
+          ? document.activeElement
+          : document.querySelector(
+              '[contenteditable="true"], [role="textbox"][contenteditable="true"]'
+            ) || document.querySelector('textarea, input[type="text"]');
+    }
+    if (!el) return { el: null, text: "" };
+
+    // Extract text based on type
+    if ("value" in el) return { el, text: String(el.value || "") };
+    try {
+      const pm = el.classList?.contains("ProseMirror")
+        ? el
+        : el.closest?.(".ProseMirror");
+      const node = pm || el;
+      const txt = String(node.innerText || node.textContent || "");
+      return { el: node, text: txt };
+    } catch {
+      return { el, text: String(el.textContent || "") };
+    }
+  }
+
+  // Expose: Enhance the current SELECTION (mirrors pill click path)
+  window.vgEnhanceSelection =
+    window.vgEnhanceSelection ||
+    (async () => {
+      if (__VG_ENH_INFLIGHT) return false;
+      const info = getSelectionInfo();
+      if (!info || !info.text || info.text.length < MIN_LEN) {
+        toast("Select at least 16 characters.");
+        return false;
+      }
+      __VG_ENH_INFLIGHT = true;
+      try {
+        const snap = makeSelectionSnapshot(info.text, info.range);
+        const resp = await __vgCallEnhance(info.text, "selection");
+        if (!resp || !resp.ok || !resp.text) {
+          toast(resp?.error || "Enhance failed.", 1600);
+          return false;
+        }
+        const enhanced = formatEnhancedForComposer(String(resp.text || ""));
+        const compEl = getActiveComposer(info.range);
+        const anchorRect = compEl
+          ? compEl.getBoundingClientRect()
+          : getPillRect();
+        openEnhanceComparePanel({
+          original: info.text,
+          enhanced,
+          anchorRect,
+          onReplace: () => {
+            applyEnhanced(enhanced, snap);
+            toast("Enhanced ✓", 1200);
+          },
+        });
+        return true;
+      } finally {
+        __VG_ENH_INFLIGHT = false;
+      }
+    });
+
+  // Expose: Enhance the ENTIRE COMPOSER (used by Quick Menu)
+  window.vgEnhanceComposerAll =
+    window.vgEnhanceComposerAll ||
+    (async () => {
+      if (__VG_ENH_INFLIGHT) return false;
+
+      const { el, text } = __readComposerText();
+      const src = String(text || "").trim();
+      if (!el || !src) {
+        toast("Nothing to enhance.");
+        return false;
+      }
+      if (src.length > MAX_LEN) {
+        toast("Text too long to enhance (>8000).");
+        return false;
+      }
+
+      // show centered progress over the composer
+      const anchorRect =
+        (el.getBoundingClientRect && el.getBoundingClientRect()) || null;
+      const overlay = __showComposerEnhancing(anchorRect || el);
+
+      __VG_ENH_INFLIGHT = true;
+      try {
+        const snap = __makeFullComposerSnapshot(el, src);
+        const resp = await __vgCallEnhance(src, "composer-all");
+        if (!resp || !resp.ok || !resp.text) {
+          overlay.close();
+          toast(resp?.error || "Enhance failed.", 1600);
+          return false;
+        }
+        const enhanced = formatEnhancedForComposer(String(resp.text || ""));
+
+        overlay.close();
+        openEnhanceComparePanel({
+          original: src,
+          enhanced,
+          anchorRect: anchorRect || getPillRect(),
+          onReplace: () => {
+            applyEnhanced(enhanced, snap);
+            toast("Enhanced ✓", 1200);
+          },
+        });
+        return true;
+      } finally {
+        try {
+          overlay?.close();
+        } catch {}
+        __VG_ENH_INFLIGHT = false;
+      }
+    });
   // ===== end inserted =====
 })();

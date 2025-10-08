@@ -1,4 +1,4 @@
-// === HUD-ONLY MODE GUARD + HUD→MENU BRIDGE ==
+// === HUD-ONLY MODE GUARD + HUD→MENU BRIDGE ===
 
 (() => {
   try {
@@ -182,6 +182,30 @@
 
       // 2) Start boot (auth + DB placement + HUD)
       await import(browser.runtime.getURL("src/boot.js"));
+
+      // 2.5) Kick one-time AI Profile snapshot on this page load
+      try {
+        // top window only; guard against double-runs
+        if (window.top === window && !window.__VG_SNAPSHOT_KICKED__) {
+          window.__VG_SNAPSHOT_KICKED__ = true;
+
+          const host = location.hostname.toLowerCase().replace(/^www\./, "");
+          const path = location.pathname || "/";
+
+          // ask BG if this page is enabled; if yes, run snapshot (BG gates capture_enabled)
+          browser.runtime
+            .sendMessage({ type: "COUNTER_HANDSHAKE", payload: { host, path } })
+            .then((res) => {
+              if (res && res.ok && res.enabled) {
+                browser.runtime
+                  .sendMessage({ type: "AI_PROFILE:RUN_SNAPSHOT" })
+                  .then(() => void browser.runtime.lastError);
+              }
+            });
+        }
+      } catch {}
+
+      // continue outer bootstrap try/catch
     } catch (e) {
       console.error("[VG] content bootstrap error:", e);
     }

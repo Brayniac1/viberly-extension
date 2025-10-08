@@ -8,9 +8,9 @@
   };
 
   /* ===============================
-   Phase 0 — Feature flag + messages
-   =============================== */
-  // Global feature flags (default OFF). Dev can override with chrome.storage.local.
+     Phase 0 — Feature flag + messages
+     =============================== */
+  // Global feature flags (default OFF). Dev can override with browser.storage.local.
   try {
     window.__VG_FEATURES = window.__VG_FEATURES || {};
   } catch {}
@@ -19,7 +19,7 @@
     if (typeof window.__VG_FEATURES.screenshot_enabled !== "boolean") {
       window.__VG_FEATURES.screenshot_enabled = true;
     }
-    // Dev override: chrome.storage.local.set({ vg_feat_screenshot: true|false })
+    // Dev override: browser.storage.local.set({ vg_feat_screenshot: true|false })
     browser?.storage?.local?.get?.(["vg_feat_screenshot"]).then((o) => {
       if (typeof o?.vg_feat_screenshot === "boolean") {
         try {
@@ -54,7 +54,7 @@
     } catch {}
   }
 
-  // === Small icon helpers (no circular chrome; used by header "+" and row "eye") ===
+  // === Small icon helpers (no circular browser; used by header "+" and row "eye") ===
   function makeIconBtn({ id, title, html, onClick, variant }) {
     const b = document.createElement("button");
     if (id) b.id = id;
@@ -96,35 +96,35 @@
     const st = document.createElement("style");
     st.id = "vg-qm-loader-style";
     st.textContent = `
-    @keyframes vgspin { to { transform: rotate(360deg); } }
-
-.vg-qm-loader {
-  display:flex;
-  flex-direction: column;         /* stack spinner above text */
-  align-items: center;            /* horizontal center */
-  justify-content: center;        /* vertical center */
-  gap:10px;
-
-  width:100%;
-  min-height:80px;                /* gives vertical room so it doesn’t collapse */
-  padding:16px;
-
-  border:1px solid #2a2a33;
-  border-radius:10px;
-  background:#0c0e13;
-  color:#cbd5e1;
-  font:14px/1.35 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-  text-align:center;
-}
-
-    .vg-qm-spinner {
-      width:16px; height:16px; border-radius:50%;
-      border:2px solid #7c3aed;       /* purple */
-      border-top-color: transparent;  /* arc effect */
-      animation: vgspin .8s linear infinite;
-      flex:0 0 auto;
-    }
-  `;
+      @keyframes vgspin { to { transform: rotate(360deg); } }
+  
+  .vg-qm-loader {
+    display:flex;
+    flex-direction: column;         /* stack spinner above text */
+    align-items: center;            /* horizontal center */
+    justify-content: center;        /* vertical center */
+    gap:10px;
+  
+    width:100%;
+    min-height:80px;                /* gives vertical room so it doesn’t collapse */
+    padding:16px;
+  
+    border:1px solid #2a2a33;
+    border-radius:10px;
+    background:#0c0e13;
+    color:#cbd5e1;
+    font:14px/1.35 Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    text-align:center;
+  }
+  
+      .vg-qm-spinner {
+        width:16px; height:16px; border-radius:50%;
+        border:2px solid #7c3aed;       /* purple */
+        border-top-color: transparent;  /* arc effect */
+        animation: vgspin .8s linear infinite;
+        flex:0 0 auto;
+      }
+    `;
     document.head.appendChild(st);
   }
   function __vgMakeLoader(label = "Loading…") {
@@ -146,42 +146,52 @@
     const st = document.createElement("style");
     st.id = "vg-qm-style";
     st.textContent = `
-    /* Scope to the Quick Menu only */
-    #vg-quick-menu .muted {
-      color: #a1a1aa;
-      font: 12px/1.35 Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
-    }
-  `;
+      /* Scope to the Quick Menu only */
+      #vg-quick-menu .muted {
+        color: #a1a1aa;
+        font: 12px/1.35 Inter,system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+      }
+    `;
     document.head.appendChild(st);
   }
 
   // Purple plus (standalone, no circle) — larger for better legibility
   const SVG_PLUS_PURPLE = `
-<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" style="display:block">
-  <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z" fill="#8B5CF6"></path>
-</svg>`;
+  <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" style="display:block">
+    <path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z" fill="#8B5CF6"></path>
+  </svg>`;
 
   // Eye icon (pixel-perfect, scalable). Stroke scales crisply; centered.
   // Source style inspired by Feather Icons.
   const SVG_EYE = `
-<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
-     fill="none" stroke="currentColor" stroke-width="2"
-     stroke-linecap="round" stroke-linejoin="round"
-     vector-effect="non-scaling-stroke" preserveAspectRatio="xMidYMid meet"
-     style="display:block">
-  <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
-  <circle cx="12" cy="12" r="3"></circle>
-</svg>`;
+  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
+       fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round"
+       vector-effect="non-scaling-stroke" preserveAspectRatio="xMidYMid meet"
+       style="display:block">
+    <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
+    <circle cx="12" cy="12" r="3"></circle>
+  </svg>`;
 
   // Minimal camera icon (for Screenshot button)
   const SVG_CAMERA = `
-<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
-     fill="none" stroke="currentColor" stroke-width="2"
-     stroke-linecap="round" stroke-linejoin="round"
-     style="display:block" preserveAspectRatio="xMidYMid meet">
-  <path d="M3 7h4l2-2h6l2 2h4v12H3z"></path>
-  <circle cx="12" cy="13" r="4"></circle>
-</svg>`;
+  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
+       fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round"
+       style="display:block" preserveAspectRatio="xMidYMid meet">
+    <path d="M3 7h4l2-2h6l2 2h4v12H3z"></path>
+    <circle cx="12" cy="13" r="4"></circle>
+  </svg>`;
+
+  // Chat bubble icon (used by AI Chat button)
+  const SVG_CHAT_BUBBLE = `
+  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"
+       fill="none" stroke="currentColor" stroke-width="1.75"
+       stroke-linecap="round" stroke-linejoin="round"
+       preserveAspectRatio="xMidYMid meet" style="display:block">
+    <rect x="4" y="4" width="16" height="12" rx="3" ry="3" vector-effect="non-scaling-stroke"></rect>
+    <path d="M8 16 L4 20 L4 16" vector-effect="non-scaling-stroke"></path>
+  </svg>`;
 
   /* ==== OPEN LISTENER — canonical: VG_QM_TOGGLE ==== */
   if (!window.__VG_QM_WIRED__) {
@@ -1594,147 +1604,147 @@
   const QUICK_TEXTS = {
     // Settings‑aligned guards
     UI: `FORBIDDEN — DESIGN / UI CHANGES
-      - Do NOT alter layout, spacing, padding, margin, positioning, breakpoints, or grid/flex structure.
-      - Do NOT add/remove/modify CSS, Tailwind classes, CSS variables/tokens, inline styles, or theme values.
-      - Do NOT change colors, typography (font, size, weight, line-height, letter-spacing), shadows, borders, radii, or animations/transitions.
-      - Do NOT insert/remove/move DOM elements for visual effect; no wrappers, containers, or markup reshuffles for style only.
-      - Do NOT change icons, images, illustrations, or asset references; do NOT swap SVG paths or viewBox.
-      - Do NOT rename or reorganize design-related class names, data-* attributes, or ARIA used for styling.
-      - If any design change appears necessary to satisfy the request, STOP and state the conflict and options.
-      Treat all UI/UX as LOCKED unless explicitly instructed with exact diffs.`,
+        - Do NOT alter layout, spacing, padding, margin, positioning, breakpoints, or grid/flex structure.
+        - Do NOT add/remove/modify CSS, Tailwind classes, CSS variables/tokens, inline styles, or theme values.
+        - Do NOT change colors, typography (font, size, weight, line-height, letter-spacing), shadows, borders, radii, or animations/transitions.
+        - Do NOT insert/remove/move DOM elements for visual effect; no wrappers, containers, or markup reshuffles for style only.
+        - Do NOT change icons, images, illustrations, or asset references; do NOT swap SVG paths or viewBox.
+        - Do NOT rename or reorganize design-related class names, data-* attributes, or ARIA used for styling.
+        - If any design change appears necessary to satisfy the request, STOP and state the conflict and options.
+        Treat all UI/UX as LOCKED unless explicitly instructed with exact diffs.`,
 
     COPY: `FORBIDDEN — TEXT / COPY CHANGES
-      - Do NOT change wording, labels, placeholders, button text, helper text, tooltips, titles, headings, alt text, or ARIA labels.
-      - Do NOT rewrite, rephrase, shorten, expand, localize, or "improve clarity".
-      - Do NOT alter capitalization, punctuation, emojis, or grammar unless explicitly instructed with exact text.
-      Copy is LOCKED. If text must change, STOP and request the exact new text.`,
+        - Do NOT change wording, labels, placeholders, button text, helper text, tooltips, titles, headings, alt text, or ARIA labels.
+        - Do NOT rewrite, rephrase, shorten, expand, localize, or "improve clarity".
+        - Do NOT alter capitalization, punctuation, emojis, or grammar unless explicitly instructed with exact text.
+        Copy is LOCKED. If text must change, STOP and request the exact new text.`,
 
     LOGIC: `FORBIDDEN — LOGIC / BEHAVIOR CHANGES
-      - Do NOT modify control flow, conditions, loops, state machines, or side effects.
-      - Do NOT change function signatures, return types, event handling, debouncing/throttling, or timing.
-      - Do NOT add/remove network calls, storage access, or permissions; do NOT change endpoints, params, or headers.
-      - Do NOT alter data transforms, parsing/validation, or error handling semantics.
-      - Do NOT add new dependencies or upgrade versions.
-      Behavior is LOCKED. Keep all execution paths identical outside the explicit scope.`,
+        - Do NOT modify control flow, conditions, loops, state machines, or side effects.
+        - Do NOT change function signatures, return types, event handling, debouncing/throttling, or timing.
+        - Do NOT add/remove network calls, storage access, or permissions; do NOT change endpoints, params, or headers.
+        - Do NOT alter data transforms, parsing/validation, or error handling semantics.
+        - Do NOT add new dependencies or upgrade versions.
+        Behavior is LOCKED. Keep all execution paths identical outside the explicit scope.`,
 
     STRICT: `SCOPE LIMIT — ONLY TOUCH LISTED FILES
-      - Only edit files explicitly listed under ALLOWED TOUCH POINTS.
-      - If another file is required, add it under "REQUESTED ADDITIONS" with reason and STOP for approval.
-      - Do NOT create, move, or delete files outside this list.
-      - Output exact file+line diffs for every touched file.`,
+        - Only edit files explicitly listed under ALLOWED TOUCH POINTS.
+        - If another file is required, add it under "REQUESTED ADDITIONS" with reason and STOP for approval.
+        - Do NOT create, move, or delete files outside this list.
+        - Output exact file+line diffs for every touched file.`,
 
     NOREF: `FORBIDDEN — REFACTORS
-      - Do NOT rename files, symbols, or modules; do NOT move code across files.
-      - Do NOT extract/inline functions, split/merge components, or change folder structure.
-      - Do NOT "clean up", reformat, reorder imports, or apply style/lint fixes unless required by the change.
-      - Keep dead code and comments untouched unless the request explicitly includes them.
-      No refactoring unless explicitly requested with exact diffs.`,
+        - Do NOT rename files, symbols, or modules; do NOT move code across files.
+        - Do NOT extract/inline functions, split/merge components, or change folder structure.
+        - Do NOT "clean up", reformat, reorder imports, or apply style/lint fixes unless required by the change.
+        - Keep dead code and comments untouched unless the request explicitly includes them.
+        No refactoring unless explicitly requested with exact diffs.`,
 
     WIRE: `CONFIG / WIRING — WHEN ADDING NEW FUNCTIONS
-      - Ensure exports/imports are added where required (index barrels included).
-      - Register routes/handlers, DI container bindings, schedulers, background jobs, and feature flags as applicable.
-      - Update initialization hooks and capability gates.
-      - Provide a WIRING CHECKLIST:
-        • export/import done
-        • route/handler registered
-        • DI binding added
-        • feature flag added
-        • init hook updated
-      Mark non-applicable items as "N/A" with a one-line reason.`,
+        - Ensure exports/imports are added where required (index barrels included).
+        - Register routes/handlers, DI container bindings, schedulers, background jobs, and feature flags as applicable.
+        - Update initialization hooks and capability gates.
+        - Provide a WIRING CHECKLIST:
+          • export/import done
+          • route/handler registered
+          • DI binding added
+          • feature flag added
+          • init hook updated
+        Mark non-applicable items as "N/A" with a one-line reason.`,
 
     POL: `DATABASE/RLS & SERVICE-ROLE SAFETY
-      - List every table/view touched. For each: required role (user/service-role), RLS on/off, and the policy name used.
-      - Do NOT weaken policies. If a minimal new policy is required, propose the smallest possible policy in a separate diff block.
-      - Include a POLICY SIMULATION with one ALLOWED and one BLOCKED example (row-level predicates shown).
-      - Confirm no service-role secrets are exposed client-side.`,
+        - List every table/view touched. For each: required role (user/service-role), RLS on/off, and the policy name used.
+        - Do NOT weaken policies. If a minimal new policy is required, propose the smallest possible policy in a separate diff block.
+        - Include a POLICY SIMULATION with one ALLOWED and one BLOCKED example (row-level predicates shown).
+        - Confirm no service-role secrets are exposed client-side.`,
 
     DATA: `DATA ALIGNMENT & SCHEMA CONTRACTS
-      - Validate field names, types, nullability, enums, and relations across all boundaries.
-      - Confirm request/response shapes and status codes; note any deviations.
-      - If a schema change is required, provide: forward migration, rollback script, and a one-line backfill plan.
-      - Output a DATA CONTRACT CHECKLIST (inputs, outputs, errors, versioning).`,
+        - Validate field names, types, nullability, enums, and relations across all boundaries.
+        - Confirm request/response shapes and status codes; note any deviations.
+        - If a schema change is required, provide: forward migration, rollback script, and a one-line backfill plan.
+        - Output a DATA CONTRACT CHECKLIST (inputs, outputs, errors, versioning).`,
 
     QA: `MANDATORY SELF-AUDIT — "DID YOU DO WHAT YOU SAID YOU WOULD DO?"
-      - Trigger: If the user asks "did you do what you said you would do?", you MUST run this audit and return the sections below.
-      - Do not claim completion unless every item has concrete evidence (file+line + test/proof).
-
-      1) Restate the Plan (Verbatim)
-      - Reproduce the exact plan you committed to earlier as a numbered list (1..N). If no plan exists, synthesize a minimal plan from your diffs.
-
-      2) Plan-by-Plan Verification Table
-      For each plan item i:
-      - Status: [Done | Partially done | Not done]
-      - Evidence: file:line pointers + minimal diff or code block proving the change
-      - Proof: how you verified it (test, run, log, screenshot, API call) + result
-      - Gaps/Fixes: what is missing or wrong and the smallest diff to correct it
-
-      3) Acceptance & Guardrail Conformance
-      - Confirm you respected all active guards (design/copy/logic/strict/noref/etc.).
-      - If any guard would be violated to fulfill the request, STOP and list the conflict + options.
-
-      4) Error & Oversight Audit
-      - List mistakes/oversights you found (syntax, wiring, RLS, service-role use, data alignment, API contracts).
-      - Root cause (1 line each): why it happened and how to prevent repeat.
-
-      5) Coverage Summary
-      - Completion % by category: logic, wiring/config, policies/RLS, data model/contracts, tests/docs.
-      - Risk notes (anything brittle, untested, or flaky).
-
-      6) New Plan to 100% (Smallest Diffs First)
-      - Provide a short, ordered plan to fix misses and mistakes.
-      - For each step: files/lines to touch, minimal change description, expected outcome.
-      - If any step needs new files/permissions/policies, mark as "NEEDS APPROVAL" with reason.
-
-      7) Next Action
-      - If fixes are allowed under current guards: apply them now and re-run the self-audit.
-      - If not allowed: STOP and await approval with your smallest-diff plan ready.`,
+        - Trigger: If the user asks "did you do what you said you would do?", you MUST run this audit and return the sections below.
+        - Do not claim completion unless every item has concrete evidence (file+line + test/proof).
+  
+        1) Restate the Plan (Verbatim)
+        - Reproduce the exact plan you committed to earlier as a numbered list (1..N). If no plan exists, synthesize a minimal plan from your diffs.
+  
+        2) Plan-by-Plan Verification Table
+        For each plan item i:
+        - Status: [Done | Partially done | Not done]
+        - Evidence: file:line pointers + minimal diff or code block proving the change
+        - Proof: how you verified it (test, run, log, screenshot, API call) + result
+        - Gaps/Fixes: what is missing or wrong and the smallest diff to correct it
+  
+        3) Acceptance & Guardrail Conformance
+        - Confirm you respected all active guards (design/copy/logic/strict/noref/etc.).
+        - If any guard would be violated to fulfill the request, STOP and list the conflict + options.
+  
+        4) Error & Oversight Audit
+        - List mistakes/oversights you found (syntax, wiring, RLS, service-role use, data alignment, API contracts).
+        - Root cause (1 line each): why it happened and how to prevent repeat.
+  
+        5) Coverage Summary
+        - Completion % by category: logic, wiring/config, policies/RLS, data model/contracts, tests/docs.
+        - Risk notes (anything brittle, untested, or flaky).
+  
+        6) New Plan to 100% (Smallest Diffs First)
+        - Provide a short, ordered plan to fix misses and mistakes.
+        - For each step: files/lines to touch, minimal change description, expected outcome.
+        - If any step needs new files/permissions/policies, mark as "NEEDS APPROVAL" with reason.
+  
+        7) Next Action
+        - If fixes are allowed under current guards: apply them now and re-run the self-audit.
+        - If not allowed: STOP and await approval with your smallest-diff plan ready.`,
 
     BASIC: `SAFETY + CONFLICT + OUTPUT (BASELINE)
-      SAFETY
-      - Keep unrelated behavior identical. Make only the smallest necessary edits.
-      - Provide explicit diffs; avoid hidden changes.
-
-      CONFLICT CHECK
-      - Before executing, check for conflicts with active guardrails.
-      - If a conflict exists, STOP and list options.
-
-      OUTPUT FORMAT
-      - For each file change:
-        START FILE: <relative-path>
-        <minimal diff or full replacement>
-        END FILE
-      - After files: include WIRING CHECKLIST, POLICY SIMULATION, and DATA CONTRACT CHECKLIST.`,
+        SAFETY
+        - Keep unrelated behavior identical. Make only the smallest necessary edits.
+        - Provide explicit diffs; avoid hidden changes.
+  
+        CONFLICT CHECK
+        - Before executing, check for conflicts with active guardrails.
+        - If a conflict exists, STOP and list options.
+  
+        OUTPUT FORMAT
+        - For each file change:
+          START FILE: <relative-path>
+          <minimal diff or full replacement>
+          END FILE
+        - After files: include WIRING CHECKLIST, POLICY SIMULATION, and DATA CONTRACT CHECKLIST.`,
 
     // Back-compat keys used by Quick Add & presets
     FORBIDDEN: `FORBIDDEN — GLOBAL SUMMARY
-      - No design/UI changes.
-      - No copy/text changes.
-      - No refactors.
-      - Do not touch files outside ALLOWED TOUCH POINTS.
-      See specific guard sections (UI, COPY, NOREF, STRICT) for strict rules.`,
+        - No design/UI changes.
+        - No copy/text changes.
+        - No refactors.
+        - Do not touch files outside ALLOWED TOUCH POINTS.
+        See specific guard sections (UI, COPY, NOREF, STRICT) for strict rules.`,
 
     SAFETY: `SAFETY
-      - Keep unrelated behavior identical. Make only the smallest necessary edits.
-      - Provide explicit diffs; avoid hidden changes.`,
+        - Keep unrelated behavior identical. Make only the smallest necessary edits.
+        - Provide explicit diffs; avoid hidden changes.`,
 
     CONFLICT: `CONFLICT CHECK
-      - Before executing, check for conflicts with active guardrails.
-      - If a conflict exists, STOP and list options.`,
+        - Before executing, check for conflicts with active guardrails.
+        - If a conflict exists, STOP and list options.`,
 
     CONFIG: `CONFIG / WIRING (REFERENCE)
-      - Exports/imports updated
-      - Routes/handlers registered
-      - DI bindings added
-      - Feature flags added
-      - Init hooks updated
-      Provide the WIRING CHECKLIST with statuses for each item.`,
+        - Exports/imports updated
+        - Routes/handlers registered
+        - DI bindings added
+        - Feature flags added
+        - Init hooks updated
+        Provide the WIRING CHECKLIST with statuses for each item.`,
 
     DB: `DATABASE/RLS & SERVICE-ROLE SAFETY
-      (Use POL key content.)`,
+        (Use POL key content.)`,
 
     OUTPUT: `OUTPUT FORMAT
-      - For each file: START FILE / diff / END FILE.
-      - Then include WIRING CHECKLIST, POLICY SIMULATION, DATA CONTRACT CHECKLIST.`,
+        - For each file: START FILE / diff / END FILE.
+        - Then include WIRING CHECKLIST, POLICY SIMULATION, DATA CONTRACT CHECKLIST.`,
 
     // Alias used by "ALL" quick add (built elsewhere)
     ALL: null,
@@ -1921,51 +1931,56 @@
       return btn;
     }
 
-    // Sparkle (AI Chat) — left
-    const sparkleBtn = mkCircleBtn({
+    // AI Chat (left) — chat bubble icon
+    const chatBtn = mkCircleBtn({
       id: "vg-ai-chat-btn",
       title: "AI Chat",
-      svg: `
-	    <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-	         stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
-	         preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-	      <g vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision">
-	        <!-- central sparkle (diamond with flares) -->
-	        <path d="M12 3 L14.5 9.5 L21 12 L14.5 14.5 L12 21 L9.5 14.5 L3 12 L9.5 9.5 Z"></path>
-	        <!-- small sparkle top-right -->
-	        <path d="M18 6 L19 8.5 L21.5 9.5 L19 10.5 L18 13 L17 10.5 L14.5 9.5 L17 8.5 Z"></path>
-	        <!-- small sparkle bottom-left -->
-	        <path d="M6 12 L6.7 13.8 L8.5 14.5 L6.7 15.2 L6 17 L5.3 15.2 L3.5 14.5 L5.3 13.8 Z"></path>
-	      </g>
-	    </svg>`,
+      svg: SVG_CHAT_BUBBLE,
     });
 
-    // Bug (Bug Buster) — right
+    // AI Enhance (right) — sparkle icon
+    const enhanceBtn = mkCircleBtn({
+      id: "vg-ai-enhance-btn",
+      title: "AI Enhance",
+      svg: `
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+             preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <g vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision">
+            <path d="M12 3 L14.5 9.5 L21 12 L14.5 14.5 L12 21 L9.5 14.5 L3 12 L9.5 9.5 Z"></path>
+            <path d="M18 6 L19 8.5 L21.5 9.5 L19 10.5 L18 13 L17 10.5 L14.5 9.5 L17 8.5 Z"></path>
+            <path d="M6 12 L6.7 13.8 L8.5 14.5 L6.7 15.2 L6 17 L5.3 15.2 L3.5 14.5 L5.3 13.8 Z"></path>
+          </g>
+        </svg>`,
+    });
+
+    // Bug Buster button (parked; kept for future reactivation)
     const bugBtnCircle = mkCircleBtn({
       id: "vg-bugbuster-btn",
       title: "Bug Buster",
       svg: `
-	    <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-	         stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
-	         preserveAspectRatio="xMidYMid meet" aria-hidden="true">
-	      <g vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision">
-	        <circle cx="12" cy="7" r="2"></circle>
-	        <ellipse cx="12" cy="14" rx="4" ry="5"></ellipse>
-	        <line x1="12" y1="9"  x2="12" y2="19"></line>
-	        <line x1="8"  y1="11" x2="4"  y2="10"></line>
-	        <line x1="8"  y1="14" x2="4"  y2="14"></line>
-	        <line x1="8"  y1="17" x2="4"  y2="18"></line>
-	        <line x1="16" y1="11" x2="20" y2="10"></line>
-	        <line x1="16" y1="14" x2="20" y2="14"></line>
-	        <line x1="16" y1="17" x2="20" y2="18"></line>
-	        <line x1="10.5" y1="5" x2="9"  y2="3"></line>
-	        <line x1="13.5" y1="5" x2="15" y2="3"></line>
-	      </g>
-	    </svg>`,
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
+             stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"
+             preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+          <g vector-effect="non-scaling-stroke" shape-rendering="geometricPrecision">
+            <circle cx="12" cy="7" r="2"></circle>
+            <ellipse cx="12" cy="14" rx="4" ry="5"></ellipse>
+            <line x1="12" y1="9"  x2="12" y2="19"></line>
+            <line x1="8"  y1="11" x2="4"  y2="10"></line>
+            <line x1="8"  y1="14" x2="4"  y2="14"></line>
+            <line x1="8"  y1="17" x2="4"  y2="18"></line>
+            <line x1="16" y1="11" x2="20" y2="10"></line>
+            <line x1="16" y1="14" x2="20" y2="14"></line>
+            <line x1="16" y1="17" x2="20" y2="18"></line>
+            <line x1="10.5" y1="5" x2="9"  y2="3"></line>
+            <line x1="13.5" y1="5" x2="15" y2="3"></line>
+          </g>
+        </svg>`,
     });
+    // NOTE: bugBtnCircle is intentionally not added to hdrActions so the feature stays parked.
 
     // Lazy-load ai-chat.js, then open the modal and close the menu
-    sparkleBtn.addEventListener("click", async (e) => {
+    chatBtn.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
       try {
@@ -1982,7 +1997,7 @@
     });
 
     // Optional: prefetch on first hover to make initial open snappier
-    sparkleBtn.addEventListener(
+    chatBtn.addEventListener(
       "mouseenter",
       () => {
         if (typeof window.openAiChatModal !== "function") {
@@ -1992,29 +2007,29 @@
       { once: true }
     );
 
-    // Lazy-load bug-buster.js, then open the flow and close the menu
-    bugBtnCircle.addEventListener("click", async (e) => {
+    // AI Enhance → enhancehighlight engine
+    enhanceBtn.addEventListener("click", async (e) => {
       e.preventDefault();
       e.stopPropagation();
       try {
-        if (typeof window.openBugBusterFlow !== "function") {
-          await import(browser.runtime.getURL("src/ui/bug-buster.js"));
+        closeMenu();
+      } catch {}
+      try {
+        if (typeof window.vgEnhanceComposerAll !== "function") {
+          await import(browser.runtime.getURL("src/ui/enhancehighlight.js"));
         }
-        try {
-          closeMenu();
-        } catch {}
-        window.openBugBusterFlow();
+        await window.vgEnhanceComposerAll?.();
       } catch (err) {
-        console.warn("[VG] Bug Buster load failed", err);
+        console.warn("[VG] AI Enhance load/exec failed", err);
       }
     });
 
-    // Optional: prefetch on first hover
-    bugBtnCircle.addEventListener(
+    // Prefetch enhance engine on hover
+    enhanceBtn.addEventListener(
       "mouseenter",
       () => {
-        if (typeof window.openBugBusterFlow !== "function") {
-          import(browser.runtime.getURL("src/ui/bug-buster.js")).catch(
+        if (typeof window.vgEnhanceComposerAll !== "function") {
+          import(browser.runtime.getURL("src/ui/enhancehighlight.js")).catch(
             () => {}
           );
         }
@@ -2022,8 +2037,8 @@
       { once: true }
     );
 
-    hdrActions.appendChild(sparkleBtn);
-    hdrActions.appendChild(bugBtnCircle);
+    hdrActions.appendChild(chatBtn);
+    hdrActions.appendChild(enhanceBtn);
 
     /* === Phase 2: Screenshot button → overlay stub (lazy-loaded) === */
     let shotBtn = null;
@@ -2198,8 +2213,8 @@
         });
       }
 
-      attach(sparkleBtn, "AI Chat");
-      attach(bugBtnCircle, "Bug Buster");
+      attach(chatBtn, "AI Chat");
+      attach(enhanceBtn, "AI Enhance");
       if (shotBtn) attach(shotBtn, "Screenshot"); // Phase 1 tooltip
       attach(gearBtn, "Dashboard");
     })();
@@ -2238,12 +2253,12 @@
       const st = document.createElement("style");
       st.id = "vg-qm-scrollbars";
       st.textContent = `
-        .vg-qm-scroll{ scrollbar-width:thin; scrollbar-color:#2a2a33 #0c0e13; }
-        .vg-qm-scroll::-webkit-scrollbar{ width:10px; height:10px; }
-        .vg-qm-scroll::-webkit-scrollbar-track{ background:#0c0e13; border-radius:8px; }
-        .vg-qm-scroll::-webkit-scrollbar-thumb{ background:#2a2a33; border-radius:8px; border:2px solid #0c0e13; }
-        .vg-qm-scroll::-webkit-scrollbar-thumb:hover{ background:#3a3a45; }
-      `;
+          .vg-qm-scroll{ scrollbar-width:thin; scrollbar-color:#2a2a33 #0c0e13; }
+          .vg-qm-scroll::-webkit-scrollbar{ width:10px; height:10px; }
+          .vg-qm-scroll::-webkit-scrollbar-track{ background:#0c0e13; border-radius:8px; }
+          .vg-qm-scroll::-webkit-scrollbar-thumb{ background:#2a2a33; border-radius:8px; border:2px solid #0c0e13; }
+          .vg-qm-scroll::-webkit-scrollbar-thumb:hover{ background:#3a3a45; }
+        `;
       document.head.appendChild(st);
     })();
 
@@ -2267,13 +2282,13 @@
     // --- Search (live filter) ---
     const searchWrap = document.createElement("div");
     searchWrap.style.cssText = `
-	  position: sticky;
-	  top: 0;               /* stick to top of scroller */
-	  background: #0f1116;  /* solid mask */
-	  padding: 8px 0 10px;  /* a bit more breathing room */
-	  z-index: 6;           /* above rows and equal/above header shadow */
-	  box-shadow: 0 6px 12px rgba(0,0,0,.25); /* subtle divider under search */
-	`;
+      position: sticky;
+      top: 0;               /* stick to top of scroller */
+      background: #0f1116;  /* solid mask */
+      padding: 8px 0 10px;  /* a bit more breathing room */
+      z-index: 6;           /* above rows and equal/above header shadow */
+      box-shadow: 0 6px 12px rgba(0,0,0,.25); /* subtle divider under search */
+    `;
 
     // Ensure header sits above everything else
     header.style.zIndex = "7";
@@ -2286,16 +2301,16 @@
     searchInput.type = "search";
     searchInput.placeholder = "Search prompts…";
     searchInput.style.cssText = `
-	  width: 100%;
-	  height: 28px;
-	  border-radius: 8px;
-	  border: 1px solid #2a2a33;
-	  background: #0c0e13;
-	  color: #e5e7eb;
-	  font: 14px/1.25 Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-	  padding: 4px 8px;
-	  outline: none;
-	`;
+      width: 100%;
+      height: 28px;
+      border-radius: 8px;
+      border: 1px solid #2a2a33;
+      background: #0c0e13;
+      color: #e5e7eb;
+      font: 14px/1.25 Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      padding: 4px 8px;
+      outline: none;
+    `;
 
     searchWrap.appendChild(searchInput);
     scroller.appendChild(searchWrap);
@@ -2529,6 +2544,10 @@
       document.body.appendChild(back);
       back.focus?.();
     }
+
+    try {
+      window.__VG_OPEN_PROMPT_PREVIEW = openPromptPreview;
+    } catch {}
 
     function closePromptPreview() {
       try {
