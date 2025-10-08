@@ -1,5 +1,8 @@
 // background.js (MV3 service worker)
 
+// importScripts("./vendor/browser-polyfill.js");
+// importScripts("./vendor/supabase.umd.js");
+
 // ---- Debug flag ----
 const DEBUG = false;
 function dbg(...args) {
@@ -12,13 +15,13 @@ function dbgDebug(...args) {
   if (DEBUG) console.debug(...args);
 }
 
-// ---- Viberly logger (quiet by default; runtime toggle via chrome.storage.local.VG_LOG_LEVEL) ----
+// ---- Viberly logger (quiet by default; runtime toggle via browser.storage.local.VG_LOG_LEVEL) ----
 let VG_LOG_LEVEL = "error"; // 'silent' | 'error' | 'warn' | 'info' | 'debug'
 try {
-  chrome.storage.local.get("VG_LOG_LEVEL", (o) => {
+  browser.storage.local.get("VG_LOG_LEVEL", (o) => {
     if (typeof o?.VG_LOG_LEVEL === "string") VG_LOG_LEVEL = o.VG_LOG_LEVEL;
   });
-  chrome.storage.onChanged.addListener((changes, area) => {
+  browser.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.VG_LOG_LEVEL) {
       VG_LOG_LEVEL = changes.VG_LOG_LEVEL.newValue || "error";
     }
@@ -43,7 +46,6 @@ const vgDebug = (...a) => {
 dbg("Viberly background loaded");
 
 // Load Supabase UMD bundle (exposes global `supabase`)
-importScripts("./vendor/supabase.umd.js");
 
 // ---- Config ----
 const VG_SUPABASE_URL = "https://auudkltdkakpnmpmddaj.supabase.co";
@@ -114,22 +116,19 @@ const VG_ALLOWED_URLS = [
   "https://zapier.com/*",
 ];
 
-// Persist Supabase session in Chrome storage (MV3-safe)
+// Persist Supabase session in browser storage (MV3-safe)
 const sbStorage = {
-  getItem: (k) =>
-    new Promise((res) =>
-      chrome.storage.local.get([k], (o) => res(o?.[k] ?? null))
-    ),
-  setItem: (k, v) =>
-    new Promise((res) => chrome.storage.local.set({ [k]: v }, res)),
-  removeItem: (k) =>
-    new Promise((res) => chrome.storage.local.remove([k], res)),
+  getItem: (k) => browser.storage.local.get([k]).then((o) => o?.[k] ?? null),
+
+  setItem: (k, v) => browser.storage.local.set({ [k]: v }),
+
+  removeItem: (k) => browser.storage.local.remove([k]),
 };
 
-// Create Supabase client (uses Chrome storage so session survives service-worker sleep)
+// Create Supabase client (uses browser storage so session survives service-worker sleep)
 const client = supabase.createClient(VG_SUPABASE_URL, VG_SUPABASE_ANON_KEY, {
   auth: {
-    storage: sbStorage, // ← IMPORTANT: persist in chrome.storage.local
+    storage: sbStorage, // ← IMPORTANT: persist in browser.storage.local
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: false,
@@ -145,14 +144,14 @@ const __VG_ALLOW_TEAM_STATES = new Set(["active", "trialing"]);
 
 async function __vgSetAccessSnapshot(snap) {
   try {
-    await chrome.storage.local.set({ [VG_ACCESS_STORAGE_KEY]: snap });
+    await browser.storage.local.set({ [VG_ACCESS_STORAGE_KEY]: snap });
   } catch {}
   return snap;
 }
 
 async function __vgGetAccessSnapshotCached() {
   try {
-    const obj = await chrome.storage.local.get(VG_ACCESS_STORAGE_KEY);
+    const obj = await browser.storage.local.get(VG_ACCESS_STORAGE_KEY);
     return obj?.[VG_ACCESS_STORAGE_KEY] || { blocked: false, team: null };
   } catch {
     return { blocked: false, team: null };
@@ -196,7 +195,7 @@ async function __vgGateIfBlocked(type, sender) {
 
       if (isTeam && status === "trial_expired" && isAdmin) return null; // allow switch-case
       try {
-        await chrome.action.openPopup();
+        await browser.browserAction.openPopup();
       } catch (_) {}
       return { ok: false, reason: isTeam ? "TEAM_BLOCKED" : "INDIV_BLOCKED" };
     }
@@ -216,7 +215,7 @@ async function __vgGateIfBlocked(type, sender) {
 
     // Block: open popup and stop the message
     try {
-      await chrome.action.openPopup();
+      browser.browserAction.openPopup();
     } catch (_) {}
     return { ok: false, reason: isTeam ? "TEAM_BLOCKED" : "INDIV_BLOCKED" };
   } catch (e) {
@@ -383,14 +382,14 @@ let VG_SESSION = null; // { access_token, refresh_token, expires_at, userId?, em
 
 async function __bgLoadSession() {
   try {
-    const obj = await chrome.storage.local.get(VG_STORAGE_KEY);
+    const obj = await browser.storage.local.get(VG_STORAGE_KEY);
     VG_SESSION = obj[VG_STORAGE_KEY] || null;
   } catch {}
 }
 async function __bgSaveSession(sess) {
   VG_SESSION = sess || null;
   try {
-    await chrome.storage.local.set({ [VG_STORAGE_KEY]: VG_SESSION });
+    await browser.storage.local.set({ [VG_STORAGE_KEY]: VG_SESSION });
   } catch {}
 }
 function __bgSnapshot() {
@@ -506,11 +505,11 @@ const __VG_TEAM_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 // Keep access snapshot fresh on SW lifecycle events
 try {
-  chrome.runtime.onStartup?.addListener(() => {
+  browser.runtime.onStartup?.addListener(() => {
     __vgComputeAccessSnapshot();
     __bgValidateAndRefreshSession(); // Also validate session on startup
   });
-  chrome.runtime.onInstalled?.addListener(() => {
+  browser.runtime.onInstalled?.addListener(() => {
     __vgComputeAccessSnapshot();
     __bgValidateAndRefreshSession(); // Also validate session on install
   });
@@ -580,8 +579,8 @@ async function __vgAdoptTokensInBG({
 // ===== Filtered broadcast helper =====
 async function __vgBroadcastAuth(signed) {
   try {
-    const allowed = await chrome.tabs.query({ url: VG_ALLOWED_URLS });
-    const active = await chrome.tabs.query({
+    const allowed = await browser.tabs.query({ url: VG_ALLOWED_URLS });
+    const active = await browser.tabs.query({
       active: true,
       currentWindow: true,
     });
@@ -596,16 +595,13 @@ async function __vgBroadcastAuth(signed) {
     dbg("[BG] __vgBroadcastAuth → signedIn =", !!signed, "tabs =", tabs.length);
 
     for (const t of tabs) {
-      chrome.tabs.sendMessage(
-        t.id,
-        { type: "VG_AUTH_CHANGED", signedIn: !!signed },
-        () => void chrome.runtime.lastError
-      );
-      chrome.tabs.sendMessage(
-        t.id,
-        { type: "AUTH_STATUS_PUSH", signedIn: !!signed },
-        () => void chrome.runtime.lastError
-      );
+      browser.tabs
+        .sendMessage(t.id, { type: "VG_AUTH_CHANGED", signedIn: !!signed })
+        .catch(() => {}); // Simply ignore the error // browser.runtime.lastError
+
+      browser.tabs
+        .sendMessage(t.id, { type: "AUTH_STATUS_PUSH", signedIn: !!signed })
+        .catch(() => {}); // Simply ignore the error // browser.runtime.lastError
     }
   } catch (e) {
     console.warn("[BG] __vgBroadcastAuth failed:", e);
@@ -973,9 +969,9 @@ async function __bbSummarizeViaSupabase(site, messages) {
 
 // === Bug Buster · OpenAI helper (must throw on errors) ===
 async function __vgCallOpenAI(messages, system) {
-  const { openai_key } = await chrome.storage.local.get(["openai_key"]);
+  const { openai_key } = await browser.storage.local.get(["openai_key"]);
   if (!openai_key)
-    throw new Error("Missing OpenAI key in chrome.storage.local.openai_key");
+    throw new Error("Missing OpenAI key in browser.storage.local.openai_key");
 
   const body = {
     model: "gpt-4o-mini",
@@ -1160,11 +1156,13 @@ async function vbStartPlacementSub(tabId, host, path) {
               corner: pick?.anchor_corner,
               strat: pick?.pick_strategy || pick?.strategy,
             });
-            chrome.tabs.sendMessage(
-              tabId,
-              { type: "VB_PLACEMENT_UPDATE", host, placement: pick },
-              () => void chrome.runtime.lastError
-            );
+            browser.tabs
+              .sendMessage(tabId, {
+                type: "VB_PLACEMENT_UPDATE",
+                host,
+                placement: pick,
+              })
+              .catch(() => {}); // Simply ignore the error // browser.runtime.lastError
           } catch {}
         }
       }
@@ -1182,32 +1180,46 @@ async function vbStartPlacementSub(tabId, host, path) {
 
 // --- Ensure Quick Menu is loaded in a tab; inject if missing ---
 async function __vgEnsureQuickMenuLoaded(tabId) {
-  return new Promise((resolve) => {
-    try {
-      // 1) Ping: is quickmenu listening already?
-      chrome.tabs.sendMessage(tabId, { type: "VG_PING_QM" }, (resp) => {
-        if (resp?.qm === true) return resolve(true);
+  try {
+    // 1) Check if quickmenu is already loaded
+    const resp = await browser.tabs.sendMessage(tabId, { type: "VG_PING_QM" });
+    if (resp?.qm === true) return true;
+  } catch (error) {
+    // Not loaded, continue to inject
+  }
 
-        // 2) Not loaded → inject, then ping again to verify
-        chrome.scripting.executeScript(
-          { target: { tabId }, files: ["src/ui/quickmenu.js"] },
-          () =>
-            chrome.tabs.sendMessage(tabId, { type: "VG_PING_QM" }, (r2) =>
-              resolve(!!r2?.qm)
-            )
-        );
+  try {
+    // 2) Inject script with feature detection
+    const hasScriptingAPI =
+      typeof chrome !== "undefined" &&
+      chrome.scripting &&
+      chrome.scripting.executeScript;
+
+    if (hasScriptingAPI) {
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ["src/ui/quickmenu.js"],
       });
-    } catch (e) {
-      console.warn("[BG] __vgEnsureQuickMenuLoaded error:", e);
-      resolve(false);
+    } else {
+      await browser.tabs.executeScript(tabId, {
+        file: "src/ui/quickmenu.js",
+      });
     }
-  });
+
+    // 3) Verify injection
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const r2 = await browser.tabs.sendMessage(tabId, { type: "VG_PING_QM" });
+    return !!r2?.qm;
+  } catch (error) {
+    console.warn("[BG] __vgEnsureQuickMenuLoaded error:", error);
+    return false;
+  }
 }
 
 // --- Magic Link Bridge: adopt tokens from viberly.ai/extension-bridge
 let __VG_BRIDGE_ADOPT_FP = null; // de-dupe fingerprint
 
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+browser.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   try {
     const url = changeInfo?.url;
     if (!url) return;
@@ -1244,13 +1256,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
     // 🚀 Post-bridge redirect (one-shot): popup sets __vg_post_bridge_redirect_url before opening the bridge
     try {
-      const { __vg_post_bridge_redirect_url } = await chrome.storage.local.get(
+      const { __vg_post_bridge_redirect_url } = await browser.storage.local.get(
         "__vg_post_bridge_redirect_url"
       );
       const target = __vg_post_bridge_redirect_url;
       if (typeof target === "string" && target) {
-        await chrome.tabs.create({ url: target, active: true });
-        await chrome.storage.local.remove("__vg_post_bridge_redirect_url");
+        await browser.tabs.create({ url: target, active: true });
+        await browser.storage.local.remove("__vg_post_bridge_redirect_url");
       }
     } catch (e) {
       console.warn("[BG][bridge] post-bridge redirect read failed:", e);
@@ -1260,10 +1272,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     const CLOSE_DELAY_MS = 2500;
     setTimeout(async () => {
       try {
-        const cur = await chrome.tabs.get(tabId);
+        const cur = await browser.tabs.get(tabId);
         const nowUrl = cur?.url || "";
         if (/^https:\/\/(www\.)?viberly\.ai\/extension-bridge/i.test(nowUrl)) {
-          await chrome.tabs.remove(tabId);
+          await browser.tabs.remove(tabId);
         }
       } catch (_) {
         /* tab already gone or navigated */
@@ -1277,7 +1289,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 // === Phase 3: active tab → host helper (popup calls BG, not content) ===
 async function __vgActiveTabHost() {
   try {
-    const [tab] = await chrome.tabs.query({
+    const [tab] = await browser.tabs.query({
       active: true,
       currentWindow: true,
     });
@@ -1295,7 +1307,7 @@ async function __vgActiveTabHost() {
 /* Phase 4: active tab → path (defaults to "/") */
 async function __vgActiveTabPath() {
   try {
-    const [tab] = await chrome.tabs.query({
+    const [tab] = await browser.tabs.query({
       active: true,
       currentWindow: true,
     });
@@ -1314,18 +1326,16 @@ async function __vgActiveTabPath() {
 async function __vgBroadcastSiteAccess(host, state /* 'on' | 'off' */) {
   try {
     const h = (host || "").toLowerCase().replace(/^www\./, "");
-    const tabs = await chrome.tabs.query({});
+    const tabs = await browser.tabs.query({});
     for (const t of tabs) {
       try {
         const th = new URL(t.url || "").hostname
           .toLowerCase()
           .replace(/^www\./, "");
         if (th === h) {
-          chrome.tabs.sendMessage(
-            t.id,
-            { type: "SITE_ACCESS_CHANGED", host: h, state },
-            () => void chrome.runtime.lastError // silence "Receiving end..." noise
-          );
+          browser.tabs
+            .sendMessage(t.id, { type: "SITE_ACCESS_CHANGED", host: h, state })
+            .catch(() => {}); // Simply ignore the error // browser.runtime.lastError
         }
       } catch {}
     }
@@ -1425,7 +1435,7 @@ async function handleMessage(msg, _host = "", sender = null) {
 
         // Build a minimal valid event that the EF will accept
         const nowIso = new Date().toISOString();
-        const ext_version = chrome?.runtime?.getManifest?.().version || null;
+        const ext_version = browser?.runtime?.getManifest?.().version || null;
 
         const body = {
           // device_id: 'dev-probe-1', // optional
@@ -1484,7 +1494,7 @@ async function handleMessage(msg, _host = "", sender = null) {
           .replace(/^www\./, "");
         const path = typeof msg.path === "string" ? msg.path : "/"; // not persisted yet
         const sessionKey = String(msg.sessionId || ""); // non-uuid session id
-        const extVersion = chrome?.runtime?.getManifest?.().version || null;
+        const extVersion = browser?.runtime?.getManifest?.().version || null;
 
         // Require session for RLS
         const {
@@ -2078,7 +2088,7 @@ async function handleMessage(msg, _host = "", sender = null) {
         try {
           const tabId = sender?.tab?.id;
           if (tabId)
-            chrome.tabs.sendMessage(tabId, {
+            browser.tabs.sendMessage(tabId, {
               type: "VG_PAYWALL_SHOW",
               payload: { reason: "custom_guard_limit" },
             });
@@ -2132,7 +2142,7 @@ async function handleMessage(msg, _host = "", sender = null) {
         try {
           const tabId = sender?.tab?.id;
           if (tabId)
-            chrome.tabs.sendMessage(tabId, {
+            browser.tabs.sendMessage(tabId, {
               type: "VG_PAYWALL_SHOW",
               payload: { reason: "quick_add_limit" },
             });
@@ -2234,13 +2244,13 @@ async function handleMessage(msg, _host = "", sender = null) {
 
     case "OPEN_POPUP": {
       try {
-        await chrome.action.openPopup();
+        await browser.browserAction.openPopup();
         vgDebug("OPEN_POPUP → action");
         return { ok: true, mode: "action" };
       } catch (e1) {
         try {
-          const url = chrome.runtime.getURL("popup.html");
-          const w = await chrome.windows.create({
+          const url = browser.runtime.getURL("popup.html");
+          const w = await browser.windows.create({
             url,
             type: "popup",
             width: 420,
@@ -2251,8 +2261,8 @@ async function handleMessage(msg, _host = "", sender = null) {
           return { ok: true, mode: "window", windowId: w?.id ?? null };
         } catch (e2) {
           try {
-            const url = chrome.runtime.getURL("popup.html");
-            await chrome.tabs.create({ url });
+            const url = browser.runtime.getURL("popup.html");
+            await browser.tabs.create({ url });
             vgDebug("OPEN_POPUP → tab");
             return { ok: true, mode: "tab" };
           } catch (e3) {
@@ -2269,12 +2279,14 @@ async function handleMessage(msg, _host = "", sender = null) {
       try {
         const winId = sender?.tab?.windowId ?? undefined; // current window by default
         const dataUrl = await new Promise((resolve, reject) => {
-          chrome.tabs.captureVisibleTab(winId, { format: "png" }, (url) => {
-            const err = chrome.runtime.lastError;
-            if (err || !url)
-              return reject(new Error(err?.message || "capture failed"));
-            resolve(url);
-          });
+          browser.tabs
+            .captureVisibleTab(winId, { format: "png" })
+            .then((url) => {
+              const err = browser.runtime.lastError;
+              if (err || !url)
+                return reject(new Error(err?.message || "capture failed"));
+              resolve(url);
+            });
         });
         return { ok: true, dataUrl };
       } catch (e) {
@@ -2286,8 +2298,8 @@ async function handleMessage(msg, _host = "", sender = null) {
     case "VG_OPEN_SIGNIN_POPUP": {
       try {
         // Prefer a real popup window, independent of action button
-        const url = chrome.runtime.getURL("popup.html?auto=1"); // ← flag this flow for auto-close
-        const w = await chrome.windows.create({
+        const url = browser.runtime.getURL("popup.html?auto=1"); // ← flag this flow for auto-close
+        const w = await browser.windows.create({
           url,
           type: "popup",
           width: 384,
@@ -2297,12 +2309,12 @@ async function handleMessage(msg, _host = "", sender = null) {
         return { ok: true, mode: "window", windowId: w?.id ?? null };
       } catch (e1) {
         try {
-          await chrome.action.openPopup();
+          await browser.browserAction.openPopup();
           return { ok: true, mode: "action" };
         } catch (e2) {
           try {
-            const url = chrome.runtime.getURL("popup.html");
-            await chrome.tabs.create({ url });
+            const url = browser.runtime.getURL("popup.html");
+            await browser.tabs.create({ url });
             return { ok: true, mode: "tab" };
           } catch (e3) {
             return { ok: false, error: String(e3?.message || e3) };
@@ -2482,7 +2494,7 @@ async function handleMessage(msg, _host = "", sender = null) {
         if (!url) return { ok: false, error: "NO_CHECKOUT_URL" };
 
         try {
-          await chrome.tabs.create({ url });
+          await browser.tabs.create({ url });
         } catch (e) {
           console.warn("[BG] tabs.create failed:", e);
         }
@@ -2642,16 +2654,14 @@ async function handleMessage(msg, _host = "", sender = null) {
         await __vgBroadcastAuth(signed);
 
         // 2) Now forward the open-billing event to the active tab
-        const [tab] = await chrome.tabs.query({
+        const [tab] = await browser.tabs.query({
           active: true,
           currentWindow: true,
         });
         if (tab?.id) {
-          chrome.tabs.sendMessage(
-            tab.id,
-            { type: "VG_OPEN_BILLING" },
-            () => void chrome.runtime.lastError
-          );
+          browser.tabs
+            .sendMessage(tab.id, { type: "VG_OPEN_BILLING" })
+            .catch(() => void browser.runtime.lastError); // Simply ignore the error // browser.runtime.lastError
         }
         return { ok: true };
       } catch (e) {
@@ -2754,7 +2764,7 @@ async function handleMessage(msg, _host = "", sender = null) {
         const getTabId = async () =>
           sender?.tab?.id ??
           (
-            await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+            await browser.tabs.query({ active: true, lastFocusedWindow: true })
           )[0]?.id;
 
         const id = await getTabId();
@@ -2765,11 +2775,9 @@ async function handleMessage(msg, _host = "", sender = null) {
         vgDebug("VG_QM_TOGGLE: ensured quickmenu", { tabId: id, ensured });
 
         // Now send the canonical toggle message
-        chrome.tabs.sendMessage(
-          id,
-          { type: "VG_QM_TOGGLE" },
-          () => void chrome.runtime.lastError
-        );
+        browser.tabs
+          .sendMessage(id, { type: "VG_QM_TOGGLE" })
+          .catch(() => void browser.runtime.lastError); // Simply ignore the error // browser.runtime.lastError
 
         return { ok: true, tabId: id, ensured };
       } catch (e) {
@@ -3469,25 +3477,21 @@ async function handleMessage(msg, _host = "", sender = null) {
         const tabId = sender?.tab?.id;
         if (tabId) {
           // forward to the content script in *this* tab
-          chrome.tabs.sendMessage(
-            tabId,
-            { type: "VG_PAYWALL_SHOW", payload: pay },
-            () => void chrome.runtime.lastError
-          );
+          browser.tabs
+            .sendMessage(tabId, { type: "VG_PAYWALL_SHOW", payload: pay })
+            .catch(() => void browser.runtime.lastError); // Simply ignore the error // browser.runtime.lastError
 
           return { ok: true };
         }
         // fallback: active tab in current window
-        const [tab] = await chrome.tabs.query({
+        const [tab] = await browser.tabs.query({
           active: true,
           currentWindow: true,
         });
         if (tab?.id) {
-          chrome.tabs.sendMessage(
-            tab.id,
-            { type: "VG_PAYWALL_SHOW", payload: pay },
-            () => void chrome.runtime.lastError
-          );
+          browser.tabs
+            .sendMessage(tab.id, { type: "VG_PAYWALL_SHOW", payload: pay })
+            .catch(() => void browser.runtime.lastError); // Simply ignore the error // browser.runtime.lastError
           return { ok: true };
         }
         return { ok: false, error: "NO_TARGET_TAB" };
@@ -3502,7 +3506,7 @@ async function handleMessage(msg, _host = "", sender = null) {
 }
 
 // Listener (pass sender host to the router)
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     try {
       const _host = (() => {
@@ -3524,7 +3528,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Cleanup: if a tab that subscribed is closed, drop its realtime channel
 try {
-  chrome.tabs.onRemoved.addListener((tabId) => {
+  browser.tabs.onRemoved.addListener((tabId) => {
     const sub = VB_PLACEMENT_SUBS?.get?.(tabId);
     if (sub?.chan) {
       try {
@@ -3536,34 +3540,47 @@ try {
 } catch {}
 
 // Hotkeys
-chrome.commands?.onCommand.addListener(async (command) => {
+browser.commands?.onCommand.addListener(async (command) => {
   try {
-    const [tab] = await chrome.tabs.query({
+    const [tab] = await browser.tabs.query({
       active: true,
       currentWindow: true,
     });
     if (!tab?.id) return;
 
     if (command === "open-marketplace") {
-      chrome.tabs.sendMessage(
+      browser.tabs.sendMessage(
         tab.id,
         { type: "VG_OPEN_MARKETPLACE" }, // have your UI route this to the Marketplace tab
-        () => void chrome.runtime.lastError
+        () => void browser.runtime.lastError
       );
       return;
     }
 
     if (command === "capture-screenshot") {
       // Ensure screenshot module is present, then open overlay
-      chrome.scripting.executeScript(
-        { target: { tabId: tab.id }, files: ["src/ui/screenshot.js"] },
-        () =>
-          chrome.tabs.sendMessage(
-            tab.id,
-            { type: "VG_SCREENSHOT_OPEN" },
-            () => void chrome.runtime.lastError
-          )
-      );
+
+      if (
+        typeof chrome !== "undefined" &&
+        chrome.scripting &&
+        chrome.scripting.executeScript
+      ) {
+        chrome.scripting.executeScript(
+          { target: { tabId: tab.id }, files: ["src/ui/screenshot.js"] },
+          () =>
+            browser.tabs
+              .sendMessage(tab.id, { type: "VG_SCREENSHOT_OPEN" })
+              .catch(() => void browser.runtime.lastError)
+        );
+      } else {
+        browser.tabs
+          .executeScript(tab.id, { file: "src/ui/screenshot.js" })
+          .then(() => {
+            browser.tabs
+              .sendMessage(tab.id, { type: "VG_SCREENSHOT_OPEN" })
+              .catch(() => void browser.runtime.lastError); // Simply ignore the error // browser.runtime.lastError
+          });
+      }
       return;
     }
   } catch (e) {

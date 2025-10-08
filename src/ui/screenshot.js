@@ -488,7 +488,7 @@
 
       let reply;
       try {
-        reply = await chrome.runtime.sendMessage({
+        reply = await browser.runtime.sendMessage({
           type: "VG_CAPTURE_VISIBLE_TAB",
         });
       } catch (err) {
@@ -675,7 +675,7 @@
   } catch {}
 
   // Allow BG hotkey → message to open overlay
-  chrome.runtime.onMessage.addListener((msg) => {
+  browser.runtime.onMessage.addListener((msg) => {
     if (msg && msg.type === "VG_SCREENSHOT_OPEN") {
       try {
         window.openScreenshotOverlay?.();
