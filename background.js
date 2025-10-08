@@ -1,7 +1,7 @@
 // background.js (MV3 service worker)
 
-// importScripts("./vendor/browser-polyfill.js");
-// importScripts("./vendor/supabase.umd.js");
+importScripts("./vendor/browser-polyfill.js");
+importScripts("./vendor/supabase.umd.js");
 
 // ---- Debug flag ----
 const DEBUG = false;
