@@ -39,7 +39,7 @@
     )
       return;
     try {
-      await import(chrome.runtime.getURL("src/ui/hud.js"));
+      await import(browser.runtime.getURL("src/ui/hud.js"));
     } catch (e) {
       console.error("[VG] failed to load HUD module:", e);
     }
@@ -70,7 +70,7 @@
   function fetchAuth() {
     return new Promise((resolve) => {
       try {
-        chrome.runtime.sendMessage({ type: "AUTH_STATUS" }, (r) => {
+        browser.runtime.sendMessage({ type: "AUTH_STATUS" }).then((r) => {
           const signed = !!r?.signedIn;
           window.__VG_SIGNED_IN_GLOBAL = signed;
           resolve(signed);
@@ -140,10 +140,9 @@
     try {
       const ask = () =>
         new Promise((res) =>
-          chrome.runtime.sendMessage(
-            { type: "VG_GET_PAGE_PLACEMENTS", host, path },
-            res
-          )
+          browser.runtime
+            .sendMessage({ type: "VG_GET_PAGE_PLACEMENTS", host, path })
+            .then(res)
         );
 
       let resp = await ask();
@@ -244,8 +243,8 @@
 
     const signed = await fetchAuth();
 
-    const ICON_IDLE = chrome.runtime.getURL("assets/inactive-pill.svg");
-    const ICON_ACTIVE = chrome.runtime.getURL("assets/active-pill.svg");
+    const ICON_IDLE = browser.runtime.getURL("assets/inactive-pill.svg");
+    const ICON_ACTIVE = browser.runtime.getURL("assets/active-pill.svg");
 
     const tryInit = () => {
       if (typeof window.__VG_INIT_HUD__ === "function") {
@@ -271,7 +270,7 @@
 
   // ---- Listen for pushed auth changes and repaint HUD only ----
   try {
-    chrome.runtime.onMessage.addListener((msg) => {
+    browser.runtime.onMessage.addListener((msg) => {
       if (msg?.type === "AUTH_STATUS_PUSH") {
         window.__VG_SIGNED_IN_GLOBAL = !!msg.signedIn;
 
@@ -286,10 +285,10 @@
               signedIn: window.__VG_SIGNED_IN_GLOBAL,
               iconIdle:
                 icons.iconIdle ||
-                chrome.runtime.getURL("assets/inactive-pill.svg"),
+                browser.runtime.getURL("assets/inactive-pill.svg"),
               iconActive:
                 icons.iconActive ||
-                chrome.runtime.getURL("assets/active-pill.svg"),
+                browser.runtime.getURL("assets/active-pill.svg"),
             },
             "*"
           );
@@ -308,9 +307,9 @@
 
         const icons = frame.__VG_ICONS__ || {};
         const iconIdle =
-          icons.iconIdle || chrome.runtime.getURL("assets/inactive-pill.svg");
+          icons.iconIdle || browser.runtime.getURL("assets/inactive-pill.svg");
         const iconActive =
-          icons.iconActive || chrome.runtime.getURL("assets/active-pill.svg");
+          icons.iconActive || browser.runtime.getURL("assets/active-pill.svg");
         const size =
           Math.round(frame.getBoundingClientRect().width) ||
           Math.round(
@@ -341,7 +340,7 @@
 
   // ---- Phase 10: live react to site-access changes (OFF/ON) ----
   try {
-    chrome.runtime.onMessage.addListener((msg) => {
+    browser.runtime.onMessage.addListener((msg) => {
       if (msg?.type !== "SITE_ACCESS_CHANGED") return;
 
       const pageHost = location.hostname.toLowerCase().replace(/^www\./, "");
@@ -367,10 +366,9 @@
           try {
             const host = location.hostname.toLowerCase().replace(/^www\./, "");
             const path = location.pathname || "/";
-            chrome.runtime.sendMessage(
-              { type: "VB_PLACEMENT_SUB", host, path },
-              () => {}
-            );
+            browser.runtime
+              .sendMessage({ type: "VB_PLACEMENT_SUB", host, path })
+              .then(() => {});
           } catch {}
         }
       }, 450);
@@ -379,7 +377,7 @@
 
   // Live placement updates → normalize + place (path-scoped)
   try {
-    chrome.runtime.onMessage.addListener((msg) => {
+    browser.runtime.onMessage.addListener((msg) => {
       if (msg?.type !== "VB_PLACEMENT_UPDATE") return;
 
       const hostNow = location.hostname.toLowerCase().replace(/^www\./, "");
@@ -489,10 +487,9 @@
     try {
       const host = location.hostname.toLowerCase().replace(/^www\./, "");
       const path = location.pathname || "/";
-      chrome.runtime.sendMessage(
-        { type: "VB_PLACEMENT_SUB", host, path },
-        () => {}
-      );
+      browser.runtime
+        .sendMessage({ type: "VB_PLACEMENT_SUB", host, path })
+        .then(() => {});
     } catch {}
   }
 
@@ -505,10 +502,9 @@
     try {
       const host = location.hostname.toLowerCase().replace(/^www\./, "");
       const path = location.pathname || "/";
-      chrome.runtime.sendMessage(
-        { type: "VB_PLACEMENT_SUB", host, path },
-        () => {}
-      );
+      browser.runtime
+        .sendMessage({ type: "VB_PLACEMENT_SUB", host, path })
+        .then(() => {});
     } catch {}
 
     // 4) NEW: treat SPA route changes like page loads

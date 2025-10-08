@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "Viberly AI",
   "short_name": "Viberly AI",
-  "version": "1.0.45",
-  "description": "Save and reuse your favorite prompts instantly inside Chrome.",
+  "version": "1.0.46",
+  "description": "Save and reuse your favorite prompts instantly inside Chrome, Firefox, and Safari.",
   "icons": {
     "16": "assets/active-pill-16.png",
     "32": "assets/active-pill-32.png",
@@ -12,18 +12,16 @@
   },
   "permissions": [
     "storage",
-    "identity",
     "scripting",
     "tabs",
     "activeTab",
-    "windows"
+    "clipboardWrite"
   ],
   "host_permissions": [
     "<all_urls>",
     "https://*.supabase.co/*",
     "https://api.openai.com/*",
     "https://viberly.ai/*",
-
     "https://lovable.dev/*",
     "https://*.lovable.dev/*",
     "https://*.replit.com/*",
@@ -125,9 +123,11 @@
         "https://zapier.com/*"
       ],
       "js": [
+        "vendor/browser-polyfill.js",
         "src/boot.js",
         "src/ui/savehighlight.js",
         "src/ui/enhancehighlight.js",
+        "src/ui/slashcommands.js",
         "src/ui/hud.js",
         "src/usage/counter.js"
       ],
@@ -138,6 +138,7 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "vendor/browser-polyfill.js",
         "auth.html",
         "src/ui/hud.js",
         "src/ui/hud_frame.html",
@@ -145,27 +146,34 @@
         "src/ui/quickmenu.js",
         "src/ui/settings.js",
         "src/ui/paywall.js",
+        "src/ui/slashcommands.js",
         "src/interceptsend.js",
         "src/ui/ai-chat.js",
         "src/ui/bug-buster.js",
         "src/ui/screenshot.js",
         "assets/*",
-
         "src/usage/tokenCounter.js",
         "vendor/gpt-tokenizer/*",
         "vendor/gpt-tokenizer/**/*"
       ],
-      "matches": ["<all_urls>"]
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
-
   "commands": {
     "open-marketplace": {
-      "suggested_key": { "default": "Ctrl+Shift+P", "mac": "Command+Shift+P" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Shift+P"
+      },
       "description": "Open Marketplace in the Dashboard"
     },
     "capture-screenshot": {
-      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
       "description": "Open Viberly Screenshot overlay"
     }
   }
