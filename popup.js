@@ -445,219 +445,35 @@ async function paintIfCurrent(seq, reason = "") {
 // ===== dev helpers (optional) =====
 window.schedulePaint = schedulePaint;
 
-// ===== minimal login wiring (email/password) =====
+// ===== minimal login wiring (redirect to hosted login) =====
 
-// safe UI helpers (no-ops if #authMsg is missing)
-function authMsg(text, type = "err") {
-  const m = document.getElementById("authMsg");
-  if (!m) return;
-  m.textContent = text || "";
-  m.classList.remove("ok", "err");
-  m.classList.add(type === "ok" ? "ok" : "err");
-  m.hidden = !text;
-}
-function authMsgClear() {
-  const m = document.getElementById("authMsg");
-  if (m) m.hidden = true;
-}
-function lock(el, on = true) {
-  if (el) {
-    el.disabled = !!on;
-    el.style.opacity = on ? "0.7" : "1";
-  }
-}
-
-// fields + button
-const fieldEmail = document.getElementById("email");
-const fieldPassword = document.getElementById("password");
-const btnLogin = document.getElementById("signin");
-
-// allow Enter to submit
-[fieldEmail, fieldPassword].forEach((el) => {
-  el?.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      btnLogin?.click();
-    }
-  });
-  el?.addEventListener("input", authMsgClear);
-});
-
-// click → Supabase sign-in → push EXACT session to BG → hydrate popup → single paint
-btnLogin?.addEventListener("click", async () => {
-  authMsgClear();
-  const email = (fieldEmail?.value || "").trim();
-  const password = fieldPassword?.value || "";
-  if (!email || !password) {
-    authMsg("Enter email and password");
-    return;
-  }
-
-  lock(btnLogin, true);
-  try {
-    const { data, error } = await window.db.auth.signInWithPassword({
-      email,
-      password,
-    });
-    if (error) {
-      authMsg(error.message || "Sign in failed");
-      return;
-    }
-
-    // 1) Use the EXACT session we just got (avoids storage timing races)
-    const s = data?.session;
-    if (
-      !s?.access_token ||
-      !s?.refresh_token ||
-      !Number.isFinite(s?.expires_at)
-    ) {
-      authMsg("Signed in but no session tokens; try again");
-      return;
-    }
-
-    // 2) Immediately hydrate this popup client from the same tokens (local truth)
-    try {
-      await window.db.auth.setSession({
-        access_token: s.access_token,
-        refresh_token: s.refresh_token,
-      });
-    } catch {}
-
-    // 3) Push those same tokens to BG SoT (global truth)
-    try {
-      await new Promise((r) => setTimeout(r, 20)); // tiny wake-up for MV3 SW
-      browser.runtime
-        .sendMessage({
-          type: "SET_SESSION",
-          access_token: s.access_token,
-          refresh_token: s.refresh_token,
-          expires_at: s.expires_at,
-          userId: s.user?.id || null,
-          email: s.user?.email || null,
-        })
-        .then((r) => console.log("[popup→bg] SET_SESSION (login) →", r));
-    } catch (e) {
-      console.warn("[popup→bg] SET_SESSION (login) failed", e);
-    }
-
-    // 4) Immediately check the gate; if blocked (team OR individual), show card and DO NOT auto-close
-    try {
-      const gateResp = await new Promise((res) =>
-        browser.runtime.sendMessage({ type: "ACCESS_RECHECK" }).then(res)
-      );
-      const snap = gateResp?.access || {};
-
-      const teamBlocked = snap.blocked === true && snap.team === true;
-      const indivBlocked =
-        snap.blocked === true &&
-        snap.team === false &&
-        (snap.indiv_status === "past_due" || snap.indiv_status === "canceled");
-
-      if (teamBlocked) {
-        if (typeof window.__vgPopupShowBlocked === "function") {
-          window.__vgPopupShowBlocked(snap);
-        } else if (typeof window.__vgPopupRecheck === "function") {
-          window.__vgPopupRecheck();
-        }
-        return;
-      }
-
-      if (indivBlocked) {
-        if (typeof window.__vgPopupShowIndividualBlocked === "function") {
-          window.__vgPopupShowIndividualBlocked(snap);
-        } else if (typeof window.__vgPopupRecheck === "function") {
-          window.__vgPopupRecheck();
-        }
-        return;
-      }
-    } catch {}
-
-    // 5) Allowed → deterministic paint + gentle auto-close
-    window.schedulePaint?.("login");
-    authMsg("Signed in", "ok");
-    setTimeout(() => closePopupSafely(), 120);
-  } catch (e) {
-    authMsg(e?.message || "Unexpected error");
-  } finally {
-    lock(btnLogin, false);
-  }
-});
-
-// === Magic Link (passwordless) ===
-const magicBtn = document.getElementById("magic");
-
-magicBtn?.addEventListener("click", async () => {
-  authMsgClear();
-  const email = (fieldEmail?.value || "").trim();
-  if (!email) {
-    authMsg("Enter your email, then press button");
-    return;
-  }
-
-  lock(magicBtn, true);
-  try {
-    // Send OTP that redirects to the bridge page on your site
-    const { error } = await db.auth.signInWithOtp({
-      email,
-      options: {
-        emailRedirectTo: "https://viberly.ai/extension-bridge",
-      },
-    });
-    if (error) {
-      authMsg(error.message || "Failed to send link");
-      return;
-    }
-    authMsg("Check your email for a login link", "ok");
-  } catch (e) {
-    authMsg(e?.message || "Unexpected error");
-  } finally {
-    lock(magicBtn, false);
-  }
-});
-
-// === Forgot Password (with BG fallback + clear feedback) ===
-const forgotBtn = document.getElementById("forgot");
-
-forgotBtn?.addEventListener("click", async (e) => {
+// Both buttons now redirect to hosted login
+document.getElementById("signup")?.addEventListener("click", (e) => {
   e.preventDefault();
-  authMsgClear();
-
-  const email = (fieldEmail?.value || "").trim();
-  if (!email) {
-    authMsg("Enter your email first, then click Forgot Password");
-    fieldEmail?.focus();
-    return;
-  }
-
-  lock(forgotBtn, true);
+  const url = "http://localhost:8081/login?extension=true";
   try {
-    // Try popup-side Supabase first
-    const { error } = await db.auth.resetPasswordForEmail(email, {
-      redirectTo: "https://viberly.ai/reset-password",
-    });
-    if (error) throw error;
-
-    authMsg("Reset link sent. Check your inbox.", "ok");
-  } catch (err1) {
-    console.warn("[popup] reset via popup failed, trying BG fallback:", err1);
-    try {
-      const resp = await new Promise((res) =>
-        browser.runtime
-          .sendMessage({
-            type: "AUTH_RESET_PASSWORD",
-            email,
-            redirectTo: "https://viberly.ai/reset-password",
-          })
-          .then(res)
-      );
-      if (resp?.ok) authMsg("Reset link sent. Check your inbox.", "ok");
-      else authMsg(resp?.error || "Failed to send reset email");
-    } catch (err2) {
-      authMsg(err2?.message || "Failed to send reset email");
-    }
-  } finally {
-    lock(forgotBtn, false);
+    browser.tabs.create({ url });
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
   }
+  // Close the extension popup after launching the login page
+  try {
+    window.close();
+  } catch {}
+});
+
+document.getElementById("showLogin")?.addEventListener("click", (e) => {
+  e.preventDefault();
+  const url = "http://localhost:8081/login?extension=true";
+  try {
+    browser.tabs.create({ url });
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+  // Close the extension popup after launching the login page
+  try {
+    window.close();
+  } catch {}
 });
 
 // ==== signup launcher → web app (returns to extension) ====
@@ -695,16 +511,6 @@ function launchSignup(mode = "signup") {
     }
   });
 }
-
-document.getElementById("signup")?.addEventListener("click", (e) => {
-  e.preventDefault();
-  const url = "https://viberly.ai/signup";
-  try {
-    browser.tabs.create({ url }); // open in a new tab (best for extensions)
-  } catch {
-    window.open(url, "_blank", "noopener,noreferrer"); // fallback
-  }
-});
 
 // Echo BG auth broadcasts in popup console (helps confirm repaint triggers)
 browser.runtime.onMessage.addListener((m) => {
@@ -1136,15 +942,6 @@ function closePopupSafely() {
     }, 400);
   }
 
-  // Tiny helpers for auth mode (default ↔ login)
-  function setAuthMode(mode) {
-    try {
-      const av = document.getElementById("authView");
-      if (!av) return;
-      av.dataset.mode = mode === "login" ? "login" : "default";
-    } catch {}
-  }
-
   document.addEventListener("DOMContentLoaded", () => {
     // ===== Blocked / billing wiring (unchanged behavior) =====
     const cta = document.getElementById("blocked-pricing-link");
@@ -1152,44 +949,18 @@ function closePopupSafely() {
 
     wireBlockedButtons(); // 🔌 make "Log out" work on blocked screen
     recheck(); // force ACCESS_RECHECK on open so status flips are reflected immediately
-
-    // ===== Two-zone auth mode wiring (NEW) =====
-    setAuthMode("default"); // default = signup hero
-
-    const showLogin = document.getElementById("showLogin");
-    const showSignupTop = document.getElementById("showSignupTop");
-    const emailField = document.getElementById("email");
-
-    if (showLogin && !showLogin.__wired) {
-      showLogin.__wired = true;
-      showLogin.addEventListener("click", (e) => {
-        e.preventDefault();
-        setAuthMode("login");
-        try {
-          emailField?.focus();
-        } catch {}
-        try {
-          authMsgClear?.();
-        } catch {}
-      });
-    }
-
-    if (showSignupTop && !showSignupTop.__wired) {
-      showSignupTop.__wired = true;
-      showSignupTop.addEventListener("click", (e) => {
-        e.preventDefault();
-        setAuthMode("default");
-        try {
-          authMsgClear?.();
-        } catch {}
-      });
-    }
   });
 
   // If auth state broadcasts while popup is open, re-render block state
   browser.runtime.onMessage.addListener((m) => {
     if (m?.type === "AUTH_STATUS_PUSH" || m?.type === "VG_AUTH_CHANGED") {
       recheck();
+    }
+  });
+
+  browser.runtime.sendMessage({ type: "GET_SESSION" }).then((resp) => {
+    if (resp?.ok) {
+      console.log("[popup] Session");
     }
   });
 

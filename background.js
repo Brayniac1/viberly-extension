@@ -401,6 +401,8 @@ function __bgSnapshot() {
   );
   return {
     signedIn,
+    access_token: s?.access_token || null,
+    refresh_token: s?.refresh_token || null,
     userId: s?.userId || null,
     email: s?.email || null,
     expires_at: s?.expires_at || null,
@@ -1574,7 +1576,6 @@ async function handleMessage(msg, _host = "", sender = null) {
       await __vgBroadcastAuth(false); // emit BOTH VG_AUTH_CHANGED and AUTH_STATUS_PUSH
       return { ok: true, status: __bgSnapshot() };
     }
-
     // Final step of web-app → extension auth callback
     case "AUTH_REDIRECT": {
       // Expect: { redirectUrl } from auth.html
@@ -1851,6 +1852,9 @@ async function handleMessage(msg, _host = "", sender = null) {
       } catch (e) {
         return { ok: false, error: String(e?.message || e) };
       }
+    }
+    case "GET_SESSION": {
+      return { ok: true, status: __bgSnapshot() };
     }
 
     case "GET_STATUS": {
