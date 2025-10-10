@@ -16,7 +16,8 @@ export function getComposerState(composer) {
       lastSpans: [],
       lastSegments: [],
       resizeObserver: null,
-      rafId: null,
+      scrollHandlers: [],
+      lastMap: null,
     };
     composerState.set(composer, state);
   }
@@ -34,10 +35,16 @@ export function clearComposerState(composer) {
       state.resizeObserver.disconnect();
     } catch {}
   }
-  if (state?.rafId != null) {
+  if (state?.scrollHandlers?.length) {
     try {
-      cancelAnimationFrame(state.rafId);
+      state.scrollHandlers.forEach(({ target, handler }) =>
+        target.removeEventListener("scroll", handler, true)
+      );
     } catch {}
+  }
+  if (state) {
+    state.scrollHandlers = [];
+    state.lastMap = null;
   }
   composerState.delete(composer);
 }

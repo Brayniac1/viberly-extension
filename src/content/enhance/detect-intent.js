@@ -69,6 +69,54 @@ function stripPrefixes(words) {
   return stripped;
 }
 
+function sanitizeToken(token) {
+  return token.replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, "");
+}
+
+function matchPrefix(tokens, list, maxLen = 3) {
+  const limit = Math.min(maxLen, tokens.length);
+  for (let len = limit; len >= 1; len--) {
+    const piece = tokens
+      .slice(0, len)
+      .map(sanitizeToken)
+      .join(" ")
+      .trim();
+    if (piece && list.includes(piece)) {
+      return len;
+    }
+  }
+  return 0;
+}
+
+function stripLeadIns(words) {
+  const stripped = [...words];
+  // Remove pure lead-ins at the very start
+  while (true) {
+    const len = matchPrefix(stripped, ENH_CFG.LEAD_IN_PREFIXES || []);
+    if (len > 0) {
+      stripped.splice(0, len);
+      continue;
+    }
+    break;
+  }
+
+  // If a pronoun prefix leads, drop any filler immediately after it
+  const pronounLen = matchPrefix(stripped, PRONOUN_PREFIXES || [], 3);
+  if (pronounLen > 0) {
+    let index = pronounLen;
+    while (index < stripped.length) {
+      const len = matchPrefix(stripped.slice(index), ENH_CFG.LEAD_IN_PREFIXES || []);
+      if (len > 0) {
+        stripped.splice(index, len);
+        continue;
+      }
+      break;
+    }
+  }
+
+  return stripped;
+}
+
 function startsWithPhrase(words, phrases) {
   const lower = words.join(" ");
   return phrases.some((phrase) => lower.startsWith(phrase));
@@ -79,10 +127,13 @@ function evaluateSegment(segment) {
   if (!cleaned) return false;
   const trimmed = cleaned.trim();
   if (!trimmed) return false;
-  const hasTerminalPunctuation = /[.!?]$/.test(trimmed);
-  if (!hasTerminalPunctuation) return false;
-  const lower = trimmed.toLowerCase();
-  const words = toWords(trimmed);
+  if (!/[.!?]$/.test(trimmed)) return false;
+
+  const originalWords = toWords(trimmed);
+  const leadStripped = stripLeadIns(originalWords);
+  const words = leadStripped.length ? leadStripped : originalWords;
+  const lower = words.join(" ");
+
   if (startsWithVerb(words)) return true;
   if (startsWithWh(words)) return true;
   if (hasPolitePrefix(lower)) return true;
@@ -90,6 +141,7 @@ function evaluateSegment(segment) {
   if (startsWithPhrase(words, COMMAND_PHRASES)) return true;
   if (startsWithPhrase(words, THIRD_PARTY_PREFIXES)) return true;
   if (cleaned.endsWith("?") && startsWithWh(words)) return true;
+
   const stripped = stripPrefixes(words);
   if (stripped.length && startsWithVerb(stripped)) return true;
   return false;

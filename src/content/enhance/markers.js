@@ -35,8 +35,8 @@ function ensureStyles(doc = document) {
   style.textContent = `
     .${MARKER_CLASS}{
       position: absolute;
-      width: 8px;
-      height: 8px;
+      width: 6px;
+      height: 6px;
       border-radius: 50%;
       background: #a0a2da;
       box-shadow: 0 0 4px rgba(0,0,0,0.25);
@@ -122,7 +122,15 @@ function encode(text) {
     .replace(/\n/g, "<br>");
 }
 
-function measureSpanRect(composer, text, span) {
+function measureSpanRect(composer, text, span, map) {
+  if (map && map.length) {
+    const rect = measureSpanRectFromMap(composer, span, map);
+    if (rect) return rect;
+  }
+  return measureSpanRectMirror(composer, text, span);
+}
+
+function measureSpanRectMirror(composer, text, span) {
   const doc = composer.ownerDocument || document;
   const mirror = ensureMirror(composer);
   const before = encode(text.slice(0, span.start));
@@ -140,6 +148,50 @@ function measureSpanRect(composer, text, span) {
     width: targetRect.width,
     height: targetRect.height,
   };
+}
+
+function measureSpanRectFromMap(composer, span, map) {
+  const doc = composer.ownerDocument || document;
+  const start = resolveMapEntry(map, span.start, 1);
+  const end = resolveMapEntry(map, span.end - 1, -1);
+  if (!start || !end) return null;
+  try {
+    const range = doc.createRange();
+    const startOffset = Math.max(0, Math.min(start.offset, getNodeLength(start.node)));
+    const endOffset = Math.max(0, Math.min(end.offset + 1, getNodeLength(end.node)));
+    range.setStart(start.node, startOffset);
+    range.setEnd(end.node, endOffset);
+    const rects = range.getClientRects();
+    if (!rects.length) return null;
+    const first = rects[0];
+    return {
+      left: first.left,
+      top: first.top,
+      width: first.width,
+      height: first.height,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolveMapEntry(map, index, direction) {
+  let i = index;
+  while (i >= 0 && i < map.length) {
+    const entry = map[i];
+    if (entry && entry.node) {
+      return { node: entry.node, offset: entry.offset };
+    }
+    i += direction;
+  }
+  return null;
+}
+
+function getNodeLength(node) {
+  if (!node) return 0;
+  if (node.nodeType === Node.TEXT_NODE) return node.data.length;
+  const text = node.textContent || "";
+  return text.length;
 }
 
 function getComposerId(composer) {
@@ -163,7 +215,7 @@ function clearMarkersForComposer(host, composer) {
     });
 }
 
-export function updateMarkers({ composer, text, spans }) {
+export function updateMarkers({ composer, text, spans, map = null }) {
   if (!composer || !text) return;
   const doc = composer.ownerDocument || document;
   ensureStyles(doc);
@@ -172,7 +224,7 @@ export function updateMarkers({ composer, text, spans }) {
   if (!spans || !spans.length) return;
   const id = getComposerId(composer);
   spans.forEach((span) => {
-    const rect = measureSpanRect(composer, text, span);
+    const rect = measureSpanRect(composer, text, span, map);
     if (!rect) return;
     const role = span.role || "action";
 
@@ -181,17 +233,8 @@ export function updateMarkers({ composer, text, spans }) {
     dot.dataset.role = role;
     dot.dataset.cmp = id;
     dot.style.left = `${rect.left + rect.width / 2}px`;
-    dot.style.top = `${rect.top - 3}px`;
+    dot.style.top = `${rect.top - (-2)}px`;
     host.appendChild(dot);
-
-    const underline = doc.createElement("div");
-    underline.className = UNDERLINE_CLASS;
-    underline.dataset.role = role;
-    underline.dataset.cmp = id;
-    underline.style.left = `${rect.left}px`;
-    underline.style.width = `${Math.max(rect.width, 2)}px`;
-    underline.style.top = `${rect.top + rect.height - 2}px`;
-    host.appendChild(underline);
   });
 }
 

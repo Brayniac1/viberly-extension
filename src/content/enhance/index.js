@@ -24,79 +24,19 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
   mountHighlightHost();
   const hover = mountHoverModal();
 
-  const MAX_RAF_ATTEMPTS = 5;
-
-  function queueOverlayRender(composer, text, spans, attempt = 0) {
+  function queueOverlayRender(composer, text, spans, map) {
     if (!composer || !spans || !spans.length) {
       clearOverlay(composer);
       return;
     }
     const state = getComposerState(composer);
     if (!state) return;
-    if (state.rafId != null) {
-      try {
-        cancelAnimationFrame(state.rafId);
-      } catch {}
-      state.rafId = null;
-    }
-    state.rafId = requestAnimationFrame(() => {
-      try {
-        const metrics = measureSpans(composer, text, spans);
-        if (!metrics) {
-          updateMarkers({ composer, text, spans });
-          return;
-        }
-        const { spans: measured, stable } = metrics;
-        if (stable || attempt >= MAX_RAF_ATTEMPTS) {
-          updateMarkers({ composer, text: measured.text, spans: measured.spans });
-          state.lastSpans = measured.spans;
-          state.rafAttempts = 0;
-        } else {
-          state.lastSpans = measured.spans;
-          state.rafAttempts = attempt + 1;
-          queueOverlayRender(composer, measured.text, measured.spans, attempt + 1);
-        }
-      } catch (e) {
-        console.debug(`${LOG_PREFIX} overlay paint failed`, e);
-      } finally {
-        state.rafId = null;
-      }
-    });
-  }
-
-  function measureSpans(composer, text, spans) {
-    try {
-      const freshText = readComposer(composer).text;
-      const spanSets = (getComposerState(composer).lastSegments || []).map((seg) =>
-        extractSpans({
-          text: freshText,
-          matchedPhrase: seg.text,
-          matchedOffset: seg.start,
-          maxLength: freshText.length,
-        })
-      );
-      const freshSpans = spanSets.flat();
-      if (!freshSpans.length) return null;
-      const stable = JSON.stringify(freshSpans) === JSON.stringify(spans);
-      return {
-        text: freshText,
-        spans: freshSpans,
-        stable,
-      };
-    } catch (e) {
-      console.debug(`${LOG_PREFIX} span measure failed`, e);
-      return null;
-    }
+    const spanMap = map ?? state.lastMap;
+    updateMarkers({ composer, text, spans, map: spanMap });
   }
 
   function clearOverlay(composer, { all = false } = {}) {
     const state = composer ? getComposerState(composer) : null;
-    if (state?.rafId != null) {
-      try {
-        cancelAnimationFrame(state.rafId);
-      } catch {}
-      state.rafId = null;
-    }
     if (all) {
       clearMarkers();
     } else if (composer) {
@@ -107,13 +47,14 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     if (state) {
       state.lastSpans = [];
       state.lastSegments = [];
+      state.lastMap = null;
     }
   }
 
   function evaluateComposer(composer) {
     if (!composer) return null;
     const state = getComposerState(composer);
-    const { text } = readComposer(composer);
+    const { text, map } = readComposer(composer);
     const now = Date.now();
     const result = shouldTrigger({
       text,
@@ -146,7 +87,8 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
       if (spans.length) {
         state.lastSpans = spans;
         state.lastSegments = segments;
-        queueOverlayRender(composer, text, spans);
+        state.lastMap = map;
+        queueOverlayRender(composer, text, spans, map);
       } else {
         clearOverlay(composer);
       }
@@ -177,7 +119,7 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     const segments = state?.lastSegments || [];
     if (!segments.length) return;
     try {
-      const { text } = readComposer(composer);
+      const { text, map } = readComposer(composer);
       const spanSets = segments.map((seg) =>
         extractSpans({
           text,
@@ -189,7 +131,8 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
       const spans = spanSets.flat();
       if (spans.length) {
         state.lastSpans = spans;
-        queueOverlayRender(composer, text, spans);
+        state.lastMap = map;
+        queueOverlayRender(composer, text, spans, map);
       } else {
         clearOverlay(composer);
       }
@@ -253,6 +196,33 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
       ensureScrollObservers(composer);
     },
     onInput: (composer) => {
+      const state = getComposerState(composer);
+      const { text, map } = readComposer(composer);
+      const trimmed = text.trim();
+      if (!trimmed) {
+        clearOverlay(composer);
+        if (state) {
+          state.lastSpans = [];
+          state.lastSegments = [];
+          state.lastMap = null;
+        }
+        return;
+      }
+      const quick = shouldTrigger({
+        text,
+        now: Date.now(),
+        lastFireAt: state?.lastFireAt ?? 0,
+      });
+      if (!quick.trigger) {
+        clearOverlay(composer);
+        if (state) {
+          state.lastSpans = [];
+          state.lastSegments = [];
+          state.lastMap = null;
+        }
+      } else if (state) {
+        state.lastMap = map;
+      }
       evaluateComposer(composer);
       scheduleEvaluation(composer);
       ensureScrollObservers(composer);
