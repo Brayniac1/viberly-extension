@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Viberly AI",
   "short_name": "Viberly AI",
-  "version": "1.0.46",
+  "version": "1.0.48",
   "description": "Save and reuse your favorite prompts instantly inside Chrome, Firefox, and Safari.",
   "icons": {
     "16": "assets/active-pill-16.png",
@@ -151,6 +151,8 @@
         "src/ui/ai-chat.js",
         "src/ui/bug-buster.js",
         "src/ui/screenshot.js",
+        "src/content/enhance/*",
+        "src/content/enhance/**/*",
         "assets/*",
         "src/usage/tokenCounter.js",
         "vendor/gpt-tokenizer/*",

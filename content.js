@@ -183,6 +183,14 @@
       // 2) Start boot (auth + DB placement + HUD)
       await import(browser.runtime.getURL("src/boot.js"));
 
+      // 2.2) Mount Enhance underline skeleton (wrecks nothing if already active)
+      try {
+        await import(browser.runtime.getURL("src/content/enhance/index.js"));
+        console.debug("[VG] enhance underline ready");
+      } catch (e) {
+        console.error("[VG] enhance underline failed:", e);
+      }
+
       // 2.5) Kick one-time AI Profile snapshot on this page load
       try {
         // top window only; guard against double-runs
