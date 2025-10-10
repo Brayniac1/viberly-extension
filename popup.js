@@ -450,7 +450,7 @@ window.schedulePaint = schedulePaint;
 // Both buttons now redirect to hosted login
 document.getElementById("signup")?.addEventListener("click", (e) => {
   e.preventDefault();
-  const url = "http://localhost:8081/login?extension=true";
+  const url = "https://viberly.ai/login?extension=true";
   try {
     browser.tabs.create({ url });
   } catch {
@@ -464,7 +464,7 @@ document.getElementById("signup")?.addEventListener("click", (e) => {
 
 document.getElementById("showLogin")?.addEventListener("click", (e) => {
   e.preventDefault();
-  const url = "http://localhost:8081/login?extension=true";
+  const url = "https://viberly.ai/login?extension=true";
   try {
     browser.tabs.create({ url });
   } catch {

@@ -58,8 +58,7 @@
     "https://figma.com/*",
     "https://www.figma.com/*",
     "https://chat.mistral.ai/*",
-    "https://viberly.ai/*",
-    "http://localhost:8081/*"
+    "https://viberly.ai/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.openai.com; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'"
@@ -138,8 +137,7 @@
     },
     {
       "matches": [
-        "https://viberly.ai/*",
-        "http://localhost:8081/*"
+        "https://viberly.ai/*"
       ],
       "js": [
         "vendor/browser-polyfill.js",
