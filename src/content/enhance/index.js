@@ -24,7 +24,9 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
   mountHighlightHost();
   const hover = mountHoverModal();
 
-  function queueOverlayRender(composer, text, spans) {
+  const MAX_RAF_ATTEMPTS = 5;
+
+  function queueOverlayRender(composer, text, spans, attempt = 0) {
     if (!composer || !spans || !spans.length) {
       clearOverlay(composer);
       return;
@@ -39,13 +41,52 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     }
     state.rafId = requestAnimationFrame(() => {
       try {
-        updateMarkers({ composer, text, spans });
+        const metrics = measureSpans(composer, text, spans);
+        if (!metrics) {
+          updateMarkers({ composer, text, spans });
+          return;
+        }
+        const { spans: measured, stable } = metrics;
+        if (stable || attempt >= MAX_RAF_ATTEMPTS) {
+          updateMarkers({ composer, text: measured.text, spans: measured.spans });
+          state.lastSpans = measured.spans;
+          state.rafAttempts = 0;
+        } else {
+          state.lastSpans = measured.spans;
+          state.rafAttempts = attempt + 1;
+          queueOverlayRender(composer, measured.text, measured.spans, attempt + 1);
+        }
       } catch (e) {
         console.debug(`${LOG_PREFIX} overlay paint failed`, e);
       } finally {
         state.rafId = null;
       }
     });
+  }
+
+  function measureSpans(composer, text, spans) {
+    try {
+      const freshText = readComposer(composer).text;
+      const spanSets = (getComposerState(composer).lastSegments || []).map((seg) =>
+        extractSpans({
+          text: freshText,
+          matchedPhrase: seg.text,
+          matchedOffset: seg.start,
+          maxLength: freshText.length,
+        })
+      );
+      const freshSpans = spanSets.flat();
+      if (!freshSpans.length) return null;
+      const stable = JSON.stringify(freshSpans) === JSON.stringify(spans);
+      return {
+        text: freshText,
+        spans: freshSpans,
+        stable,
+      };
+    } catch (e) {
+      console.debug(`${LOG_PREFIX} span measure failed`, e);
+      return null;
+    }
   }
 
   function clearOverlay(composer, { all = false } = {}) {
@@ -126,6 +167,7 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     state.debounceTimer = setTimeout(() => {
       state.debounceTimer = null;
       evaluateComposer(composer);
+      ensureScrollObservers(composer);
     }, ADAPTIVE_DEBOUNCE_MS);
   }
 
@@ -170,14 +212,50 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     }
   }
 
+  function ensureScrollObservers(composer) {
+    if (!composer) return;
+    const state = getComposerState(composer);
+    if (!state) return;
+    const handlers = state.scrollHandlers || [];
+    const roots = new Set();
+    let node = composer;
+    while (node) {
+      if (node === document || node === document.body) break;
+      const style = node instanceof Element ? getComputedStyle(node) : null;
+      if (style) {
+        const overflowY = style.overflowY;
+        if (
+          (overflowY === "auto" || overflowY === "scroll") &&
+          node.scrollHeight > node.clientHeight
+        ) {
+          roots.add(node);
+        }
+      }
+      node = node.parentNode || node.host || node.ownerDocument?.defaultView;
+      if (node === document) break;
+    }
+    roots.add(window);
+    if (handlers.length) return;
+    const handler = () => refreshOverlay(composer);
+    roots.forEach((target) => {
+      try {
+        target.addEventListener("scroll", handler, { passive: true, capture: true });
+        handlers.push({ target, handler });
+      } catch {}
+    });
+    state.scrollHandlers = handlers;
+  }
+
   const watcher = initComposerWatch({
     onComposerFound: (composer) => {
       evaluateComposer(composer);
       scheduleEvaluation(composer);
+      ensureScrollObservers(composer);
     },
     onInput: (composer) => {
       evaluateComposer(composer);
       scheduleEvaluation(composer);
+      ensureScrollObservers(composer);
     },
     onComposerBlur: (composer) => {
       clearOverlay(composer);

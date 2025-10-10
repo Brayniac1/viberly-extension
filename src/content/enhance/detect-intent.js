@@ -77,8 +77,12 @@ function startsWithPhrase(words, phrases) {
 function evaluateSegment(segment) {
   const cleaned = normalize(segment);
   if (!cleaned) return false;
-  const lower = cleaned.toLowerCase();
-  const words = toWords(cleaned);
+  const trimmed = cleaned.trim();
+  if (!trimmed) return false;
+  const hasTerminalPunctuation = /[.!?]$/.test(trimmed);
+  if (!hasTerminalPunctuation) return false;
+  const lower = trimmed.toLowerCase();
+  const words = toWords(trimmed);
   if (startsWithVerb(words)) return true;
   if (startsWithWh(words)) return true;
   if (hasPolitePrefix(lower)) return true;

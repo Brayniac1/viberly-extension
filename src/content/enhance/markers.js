@@ -181,7 +181,7 @@ export function updateMarkers({ composer, text, spans }) {
     dot.dataset.role = role;
     dot.dataset.cmp = id;
     dot.style.left = `${rect.left + rect.width / 2}px`;
-    dot.style.top = `${rect.top - 6}px`;
+    dot.style.top = `${rect.top - 3}px`;
     host.appendChild(dot);
 
     const underline = doc.createElement("div");
