@@ -17,14 +17,7 @@
 </style>
 
 <style>
-  /* Auth mode (no animations; instant toggle) */
-  #authView[data-mode="default"] #zone1 { display:block; }
-  #authView[data-mode="default"] #zone2Form { display:none; }
-  #authView[data-mode="default"] #zone2LinkRow { display:block; }
-
-  #authView[data-mode="login"] #zone1 { display:none; }
-  #authView[data-mode="login"] #zone2Form { display:block; }
-  #authView[data-mode="login"] #zone2LinkRow { display:none; }
+  /* Auth mode simplified - no toggle needed since both buttons go to hosted login */
 </style>
 
 
@@ -426,7 +419,7 @@ label{ display:block; font-size:13px; margin:10px 0 6px; }
 
   <div class="wrap">
    <!-- ================= AUTH VIEW ================= -->
-<section id="authView" data-mode="default">
+<section id="authView">
   <div class="card">
     <div class="brand">
       <img class="logo" src="../../assets/Viberly-transparent.svg" alt="Viberly" />
@@ -442,37 +435,13 @@ label{ display:block; font-size:13px; margin:10px 0 6px; }
       <button id="signup" class="btn primary">Create Free Account</button>
     </div>
 
-    <!-- Quiet link row (visible in default mode only) -->
-    <div id="zone2LinkRow" class="footer" style="margin-top:14px;">
+    <!-- Both buttons now go to hosted login -->
+    <div class="footer" style="margin-top:14px;">
       <span class="muted">Already have an account?</span>
       <a id="showLogin" class="link" href="#" style="margin-left:6px;">Log in</a>
     </div>
 
-    <!-- ===== Zone 2 (Login – expands, hides Zone 1) ===== -->
-    <div id="zone2Form">
-      <!-- Back to signup link (only in login mode) -->
-      <div style="margin-bottom:8px;">
-        <a id="showSignupTop" class="link" href="#">← Create Free Account</a>
-      </div>
-
-      <label for="email">Email</label>
-      <input id="email" class="input" type="email" placeholder="you@domain.com" autocomplete="email" />
-
-      <label for="password">Password</label>
-      <input id="password" class="input" type="password" placeholder="••••••••" autocomplete="current-password" />
-
-      <div class="spacer"></div>
-      <a id="forgot" class="link" href="#">Forgot your password?</a>
-
-      <div class="spacer"></div>
-      <button id="signin" class="btn primary">Log in</button>
-
-      <!-- inline auth message (hidden by default) -->
-      <div id="authMsg" class="msg" hidden></div>
-
-      <div class="spacer"></div>
-      <button id="magic" class="btn">Send me a magic link</button>
-    </div>
+    <!-- ===== Zone 2 (Login – removed, redirecting to hosted login) ===== -->
   </div>
 </section>
 
