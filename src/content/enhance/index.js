@@ -8,7 +8,7 @@ import { initComposerWatch } from "./composer-watch.js";
 import { shouldTrigger } from "./detect-intent.js";
 import { readComposer } from "./read-composer.js";
 import { extractSpans } from "./extract-spans.js";
-import { getComposerState } from "./state.js";
+import { getComposerState, clearComposerState } from "./state.js";
 import { updateMarkers, clearMarkers } from "./markers.js";
 
 const DEVTOOLS_KEY = "__VIB_ENHANCE_DEVTOOLS__";
@@ -21,8 +21,53 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
   }
   window[ENH_ROOT_FLAG] = true;
 
-  const highlight = mountHighlightHost();
+  mountHighlightHost();
   const hover = mountHoverModal();
+
+  function queueOverlayRender(composer, text, spans) {
+    if (!composer || !spans || !spans.length) {
+      clearOverlay(composer);
+      return;
+    }
+    const state = getComposerState(composer);
+    if (!state) return;
+    if (state.rafId != null) {
+      try {
+        cancelAnimationFrame(state.rafId);
+      } catch {}
+      state.rafId = null;
+    }
+    state.rafId = requestAnimationFrame(() => {
+      try {
+        updateMarkers({ composer, text, spans });
+      } catch (e) {
+        console.debug(`${LOG_PREFIX} overlay paint failed`, e);
+      } finally {
+        state.rafId = null;
+      }
+    });
+  }
+
+  function clearOverlay(composer, { all = false } = {}) {
+    const state = composer ? getComposerState(composer) : null;
+    if (state?.rafId != null) {
+      try {
+        cancelAnimationFrame(state.rafId);
+      } catch {}
+      state.rafId = null;
+    }
+    if (all) {
+      clearMarkers();
+    } else if (composer) {
+      clearMarkers(composer);
+    } else {
+      clearMarkers();
+    }
+    if (state) {
+      state.lastSpans = [];
+      state.lastSegments = [];
+    }
+  }
 
   function evaluateComposer(composer) {
     if (!composer) return null;
@@ -37,18 +82,36 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     state.lastEvaluatedAt = now;
     state.lastHash = text;
     if (result.trigger) {
-      highlight.applyFullUnderline(composer);
-      const spans = extractSpans({
-        text,
-        matchedPhrase: result.matchedPhrase,
-        matchedOffset: result.matchedOffset,
-        maxLength: text.length,
-      });
-      updateMarkers({ composer, text, spans });
+      const segments =
+        Array.isArray(result.matchedSegments) && result.matchedSegments.length
+          ? result.matchedSegments
+          : result.matchedPhrase
+          ? [
+              {
+                text: result.matchedPhrase,
+                start: result.matchedOffset ?? 0,
+              },
+            ]
+          : [];
+      const spanSets = segments.map((seg) =>
+        extractSpans({
+          text,
+          matchedPhrase: seg.text,
+          matchedOffset: seg.start,
+          maxLength: text.length,
+        })
+      );
+      const spans = spanSets.flat();
+      if (spans.length) {
+        state.lastSpans = spans;
+        state.lastSegments = segments;
+        queueOverlayRender(composer, text, spans);
+      } else {
+        clearOverlay(composer);
+      }
       state.lastFireAt = now;
     } else {
-      highlight.clearUnderline(composer);
-      clearMarkers(composer);
+      clearOverlay(composer);
     }
     console.debug(`${LOG_PREFIX} intent result`, result);
     return result;
@@ -56,6 +119,8 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
 
   function scheduleEvaluation(composer) {
     if (!composer) return;
+    ensureResizeObserver(composer);
+    refreshOverlay(composer);
     const state = getComposerState(composer);
     if (state.debounceTimer) clearTimeout(state.debounceTimer);
     state.debounceTimer = setTimeout(() => {
@@ -64,10 +129,60 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     }, ADAPTIVE_DEBOUNCE_MS);
   }
 
+  function refreshOverlay(composer) {
+    if (!composer) return;
+    const state = getComposerState(composer);
+    const segments = state?.lastSegments || [];
+    if (!segments.length) return;
+    try {
+      const { text } = readComposer(composer);
+      const spanSets = segments.map((seg) =>
+        extractSpans({
+          text,
+          matchedPhrase: seg.text,
+          matchedOffset: seg.start,
+          maxLength: text.length,
+        })
+      );
+      const spans = spanSets.flat();
+      if (spans.length) {
+        state.lastSpans = spans;
+        queueOverlayRender(composer, text, spans);
+      } else {
+        clearOverlay(composer);
+      }
+    } catch (e) {
+      console.debug(`${LOG_PREFIX} overlay refresh failed`, e);
+    }
+  }
+
+  function ensureResizeObserver(composer) {
+    if (!composer) return;
+    const state = getComposerState(composer);
+    if (!state || state.resizeObserver || typeof ResizeObserver !== "function")
+      return;
+    try {
+      const ro = new ResizeObserver(() => refreshOverlay(composer));
+      ro.observe(composer);
+      state.resizeObserver = ro;
+    } catch (e) {
+      console.debug(`${LOG_PREFIX} resize observer failed`, e);
+    }
+  }
+
   const watcher = initComposerWatch({
-    onComposerFound: scheduleEvaluation,
-    onInput: scheduleEvaluation,
-    onComposerBlur: (composer) => highlight.clearUnderline(composer),
+    onComposerFound: (composer) => {
+      evaluateComposer(composer);
+      scheduleEvaluation(composer);
+    },
+    onInput: (composer) => {
+      evaluateComposer(composer);
+      scheduleEvaluation(composer);
+    },
+    onComposerBlur: (composer) => {
+      clearOverlay(composer);
+      clearComposerState(composer);
+    },
   });
 
   function openModalTest() {
@@ -93,10 +208,16 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
   }
 
   function teardown() {
+    const active = watcher.getActiveComposer?.();
     watcher.destroy();
     hover.destroy();
     highlight.clearAll();
-    clearMarkers();
+    if (active) {
+      clearOverlay(active, { all: true });
+      clearComposerState(active);
+    } else {
+      clearOverlay(null, { all: true });
+    }
     delete window[ENH_ROOT_FLAG];
     console.info(`${LOG_PREFIX} skeleton torn down`);
   }

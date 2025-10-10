@@ -3,6 +3,7 @@
 
 const MARKER_HOST_ID = "__vib_marker_host__";
 const MARKER_CLASS = "vib-marker-dot";
+const UNDERLINE_CLASS = "vib-marker-underline";
 const MIRROR_ID = "__vib_marker_mirror__";
 
 const composerIds = new WeakMap();
@@ -44,6 +45,40 @@ function ensureStyles(doc = document) {
     .${MARKER_CLASS}[data-role="action"]{ background:#8e90d3; }
     .${MARKER_CLASS}[data-role="topic"]{ background:#b3b5e3; }
     .${MARKER_CLASS}[data-role="recipient"]{ background:#7f81c5; }
+    .${UNDERLINE_CLASS}{
+      position: absolute;
+      height: 2px;
+      border-radius: 1px;
+      background-image: repeating-linear-gradient(
+        to right,
+        #a0a2da 0 5px,
+        transparent 5px 9px
+      );
+      background-repeat: repeat-x;
+      pointer-events: none;
+      opacity: 0.95;
+    }
+    .${UNDERLINE_CLASS}[data-role="action"]{
+      background-image: repeating-linear-gradient(
+        to right,
+        #8e90d3 0 5px,
+        transparent 5px 9px
+      );
+    }
+    .${UNDERLINE_CLASS}[data-role="topic"]{
+      background-image: repeating-linear-gradient(
+        to right,
+        #b3b5e3 0 5px,
+        transparent 5px 9px
+      );
+    }
+    .${UNDERLINE_CLASS}[data-role="recipient"]{
+      background-image: repeating-linear-gradient(
+        to right,
+        #7f81c5 0 5px,
+        transparent 5px 9px
+      );
+    }
   `;
   doc.head.appendChild(style);
 }
@@ -119,9 +154,13 @@ function getComposerId(composer) {
 function clearMarkersForComposer(host, composer) {
   const id = composerIds.get(composer);
   if (!id) return;
-  host.querySelectorAll(`.${MARKER_CLASS}[data-cmp="${id}"]`).forEach((node) => {
-    node.remove();
-  });
+  host
+    .querySelectorAll(
+      `.${MARKER_CLASS}[data-cmp="${id}"], .${UNDERLINE_CLASS}[data-cmp="${id}"]`
+    )
+    .forEach((node) => {
+      node.remove();
+    });
 }
 
 export function updateMarkers({ composer, text, spans }) {
@@ -135,13 +174,24 @@ export function updateMarkers({ composer, text, spans }) {
   spans.forEach((span) => {
     const rect = measureSpanRect(composer, text, span);
     if (!rect) return;
+    const role = span.role || "action";
+
     const dot = doc.createElement("div");
     dot.className = MARKER_CLASS;
-    dot.dataset.role = span.role || "action";
+    dot.dataset.role = role;
     dot.dataset.cmp = id;
     dot.style.left = `${rect.left + rect.width / 2}px`;
     dot.style.top = `${rect.top - 6}px`;
     host.appendChild(dot);
+
+    const underline = doc.createElement("div");
+    underline.className = UNDERLINE_CLASS;
+    underline.dataset.role = role;
+    underline.dataset.cmp = id;
+    underline.style.left = `${rect.left}px`;
+    underline.style.width = `${Math.max(rect.width, 2)}px`;
+    underline.style.top = `${rect.top + rect.height - 2}px`;
+    host.appendChild(underline);
   });
 }
 

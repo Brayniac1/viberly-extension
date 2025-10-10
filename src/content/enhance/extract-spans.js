@@ -124,6 +124,7 @@ export function extractSpans({
   const docLength = typeof maxLength === "number" ? maxLength : text.length;
 
   const { stripped } = tokenSegments(sentence);
+  let actionSpan = null;
   const actionMatch =
     findFromList(lower, COMMAND_PHRASES) ||
     findFromList(lower, INTENT.verbs) ||
@@ -131,30 +132,28 @@ export function extractSpans({
     findFromList(lower, THIRD_PARTY_PREFIXES);
 
   if (actionMatch) {
-    spans.push(
-      clampSpan(
-        {
-          start: base + actionMatch.start,
-          end: base + actionMatch.end,
-          role: "action",
-        },
-        docLength
-      )
+    actionSpan = clampSpan(
+      {
+        start: base + actionMatch.start,
+        end: base + actionMatch.end,
+        role: "action",
+      },
+      docLength
     );
+    spans.push(actionSpan);
   } else if (stripped.length) {
     const firstWord = stripped[0];
     const idx = lower.indexOf(firstWord);
     if (idx >= 0) {
-      spans.push(
-        clampSpan(
-          {
-            start: base + idx,
-            end: base + idx + firstWord.length,
-            role: "action",
-          },
-          docLength
-        )
+      actionSpan = clampSpan(
+        {
+          start: base + idx,
+          end: base + idx + firstWord.length,
+          role: "action",
+        },
+        docLength
       );
+      spans.push(actionSpan);
     }
   }
 
@@ -187,6 +186,20 @@ export function extractSpans({
         break;
       }
     }
+  }
+
+  const directObjectSpan = actionSpan
+    ? findDirectObjectSpan({
+        sentence,
+        lower,
+        base,
+        actionSpan,
+        docLength,
+      })
+    : null;
+
+  if (directObjectSpan) {
+    spans.push(directObjectSpan);
   }
 
   if (!topicSpan) {
@@ -236,4 +249,122 @@ export function extractSpans({
 
 function __DEV__() {
   return typeof window !== "undefined" && window.__VIB_ENHANCE_DEV__ === true;
+}
+
+const DETERMINERS = [
+  "a",
+  "an",
+  "the",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "our",
+  "your",
+  "his",
+  "her",
+  "their",
+  "any",
+  "another",
+];
+
+const NUMBER_WORDS = [
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "eleven",
+  "twelve",
+  "thirteen",
+  "fourteen",
+  "fifteen",
+  "sixteen",
+  "seventeen",
+  "eighteen",
+  "nineteen",
+  "twenty",
+];
+
+const OBJECT_STOP_WORDS = [
+  ...TOPIC_PREPS,
+  "to",
+  "with",
+  "at",
+  "from",
+  "into",
+  "onto",
+  "over",
+  "under",
+  "around",
+  "and",
+  "but",
+  "or",
+];
+
+function findDirectObjectSpan({ sentence, lower, base, actionSpan, docLength }) {
+  const relStart = Math.max(0, actionSpan.end - base);
+  if (relStart >= sentence.length) return null;
+
+  const tail = sentence.slice(relStart);
+  const lowerTail = lower.slice(relStart);
+
+  let stopIdx = tail.length;
+  for (const stop of OBJECT_STOP_WORDS) {
+    const idx = lowerTail.indexOf(`${stop} `);
+    if (idx >= 0 && idx < stopIdx) {
+      stopIdx = idx;
+    }
+  }
+
+  const candidate = tail.slice(0, stopIdx).trim();
+  if (!candidate) return null;
+  const lowerCandidate = candidate.toLowerCase();
+
+  const detRegex = new RegExp(
+    `\\b(?:${[...DETERMINERS, ...NUMBER_WORDS].join("|")}|\\d+)\\b`
+  );
+  let startOffset = 0;
+  const detMatch = detRegex.exec(lowerCandidate);
+  if (detMatch) {
+    startOffset = detMatch.index;
+  } else {
+    const firstWord = /\b[a-z0-9][\w'-]*\b/i.exec(candidate);
+    if (!firstWord) return null;
+    startOffset = firstWord.index;
+  }
+
+  const words = [];
+  const wordRegex = /\b[a-z0-9][\w'-]*\b/gi;
+  wordRegex.lastIndex = startOffset;
+  let wordMatch;
+  while ((wordMatch = wordRegex.exec(candidate))) {
+    words.push(wordMatch);
+    if (wordRegex.lastIndex >= candidate.length) break;
+    if (words.length >= 4) break;
+  }
+  if (!words.length) return null;
+  const lastWord = words[words.length - 1];
+  const localStart = startOffset;
+  const localEnd = lastWord.index + lastWord[0].length;
+  if (localEnd <= localStart) return null;
+
+  const absStart = base + relStart + localStart;
+  const absEnd = base + relStart + localEnd;
+  if (absEnd - absStart < 2) return null;
+
+  return clampSpan(
+    {
+      start: absStart,
+      end: absEnd,
+      role: "topic",
+    },
+    docLength
+  );
 }

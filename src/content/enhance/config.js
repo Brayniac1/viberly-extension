@@ -31,7 +31,7 @@ export const ENH_CFG = Object.freeze({
   ADAPTIVE_DEBOUNCE_MS: 160,
   COOLDOWN_MS: 0,
   EPHEMERAL: { FULL: 4000, HALF: 8000, QUARTER: 12_000 },
-  MAX_CLUSTERS: 3,
+  MAX_CLUSTERS: 4,
   COLORS: {
     underline: "#a0a2da",
     underlineLight: "#8e90d3",

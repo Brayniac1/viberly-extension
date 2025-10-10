@@ -123,6 +123,7 @@ export function shouldTrigger({
   const segments = [];
   const regex = /([^\n.!?]+[.!?]?)/g;
   let match;
+  let matchesWithIntent = [];
   while ((match = regex.exec(normalized))) {
     const raw = match[1];
     const leading = raw.length - raw.replace(/^\s+/, "").length;
@@ -141,9 +142,15 @@ export function shouldTrigger({
   for (const seg of segments) {
     if (evaluateSegment(seg.text)) {
       result.hasIntent = true;
-      result.matchedPhrase = seg.text.slice(0, 120);
-      result.matchedOffset = seg.start;
-      break;
+      matchesWithIntent.push({
+        text: seg.text.slice(0, 240),
+        start: seg.start,
+        end: seg.end,
+      });
+      if (!result.matchedPhrase) {
+        result.matchedPhrase = seg.text.slice(0, 120);
+        result.matchedOffset = seg.start;
+      }
     }
   }
 
@@ -159,10 +166,12 @@ export function shouldTrigger({
 
   result.trigger = true;
   result.reason = "intent";
+  result.matchedSegments = matchesWithIntent;
   result.cooldownUntil = now + COOLDOWN_MS;
   console.debug(`${LOG_PREFIX} intent hit`, {
     words: result.wordCount,
     matched: result.matchedPhrase,
+    segments: matchesWithIntent.length,
   });
   return result;
 }

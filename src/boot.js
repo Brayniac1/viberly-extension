@@ -498,6 +498,14 @@
     await initHudOnce(); // 1) iframe HUD up with correct auth + icons
     await fetchAndApplyPlacement(); // 2) DB placement applied
 
+    // 3) Ensure Enhance underline skeleton is mounted (safe no-op if already active)
+    try {
+      await import(browser.runtime.getURL("src/content/enhance/index.js"));
+      console.debug("[VG] enhance underline ready (boot)");
+    } catch (e) {
+      console.error("[VG] enhance underline failed (boot)", e);
+    }
+
     // Start live placement subscription for *this* host+path (path-scoped; safe on all sites)
     try {
       const host = location.hostname.toLowerCase().replace(/^www\./, "");

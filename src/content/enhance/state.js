@@ -13,6 +13,10 @@ export function getComposerState(composer) {
       cooldownUntil: 0,
       debounceTimer: null,
       lastHash: "",
+      lastSpans: [],
+      lastSegments: [],
+      resizeObserver: null,
+      rafId: null,
     };
     composerState.set(composer, state);
   }
@@ -24,6 +28,16 @@ export function clearComposerState(composer) {
   const state = composerState.get(composer);
   if (state?.debounceTimer) {
     clearTimeout(state.debounceTimer);
+  }
+  if (state?.resizeObserver) {
+    try {
+      state.resizeObserver.disconnect();
+    } catch {}
+  }
+  if (state?.rafId != null) {
+    try {
+      cancelAnimationFrame(state.rafId);
+    } catch {}
   }
   composerState.delete(composer);
 }
