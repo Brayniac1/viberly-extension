@@ -17,7 +17,10 @@ export function getComposerState(composer) {
       lastSegments: [],
       resizeObserver: null,
       scrollHandlers: [],
+      mutationObserver: null,
       lastMap: null,
+      lastText: "",
+      improveScore: null,
     };
     composerState.set(composer, state);
   }
@@ -42,9 +45,17 @@ export function clearComposerState(composer) {
       );
     } catch {}
   }
+  if (state?.mutationObserver) {
+    try {
+      state.mutationObserver.disconnect();
+    } catch {}
+  }
   if (state) {
     state.scrollHandlers = [];
+    state.mutationObserver = null;
     state.lastMap = null;
+    state.lastText = "";
+    state.improveScore = null;
   }
   composerState.delete(composer);
 }

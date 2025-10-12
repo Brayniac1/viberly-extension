@@ -9,10 +9,29 @@ import { shouldTrigger } from "./detect-intent.js";
 import { readComposer } from "./read-composer.js";
 import { extractSpans } from "./extract-spans.js";
 import { getComposerState, clearComposerState } from "./state.js";
-import { updateMarkers, clearMarkers } from "./markers.js";
+import {
+  updateMarkers,
+  clearMarkers,
+  isModalActiveForComposer,
+} from "./markers.js";
 
 const DEVTOOLS_KEY = "__VIB_ENHANCE_DEVTOOLS__";
 const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
+
+function computeImproveScore(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return null;
+  let hash = 0;
+  for (let i = 0; i < clean.length; i++) {
+    hash = (hash * 31 + clean.charCodeAt(i)) >>> 0;
+  }
+  const rand = (hash % 1000) / 999; // 0..1
+  const length = clean.length;
+  const lengthFactor = Math.max(0, Math.min(1, 220 / (length + 80)));
+  const mix = Math.min(1, rand * 0.35 + lengthFactor * 0.65);
+  const value = Math.round(67 + mix * 67);
+  return Math.max(67, Math.min(134, value));
+}
 
 (function initEnhanceSkeleton() {
   if (window[ENH_ROOT_FLAG]) {
@@ -24,19 +43,51 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
   mountHighlightHost();
   const hover = mountHoverModal();
 
-  function queueOverlayRender(composer, text, spans, map) {
-    if (!composer || !spans || !spans.length) {
-      clearOverlay(composer);
-      return;
-    }
-    const state = getComposerState(composer);
-    if (!state) return;
-    const spanMap = map ?? state.lastMap;
-    updateMarkers({ composer, text, spans, map: spanMap });
+  function queueOverlayRender(
+    composer,
+    text,
+    spans,
+    map,
+    segments = [],
+    meta = {}
+  ) {
+  if (!composer || !spans || !spans.length) {
+    clearOverlay(composer);
+    return;
   }
+  const state = getComposerState(composer);
+  if (!state) return;
+  const spanMap = map ?? state.lastMap;
+  updateMarkers({
+    composer,
+    text,
+    spans,
+    map: spanMap,
+    segments,
+    improveScore: meta.improveScore ?? state.improveScore ?? null,
+    rawText: meta.text ?? state.lastText ?? "",
+  });
+}
 
   function clearOverlay(composer, { all = false } = {}) {
     const state = composer ? getComposerState(composer) : null;
+    const modalActive =
+      composer && !all ? isModalActiveForComposer(composer) : false;
+    const stack = new Error().stack;
+    console.log("[VG][modal] clearOverlay", {
+      composer,
+      all,
+      statePresent: Boolean(state),
+      modalActive,
+      stack,
+    });
+    if (!all && modalActive) {
+      console.log("[VG][modal] clearOverlay skipped due to active modal");
+      return;
+    }
+    if (all) {
+      console.log("[VG][modal] clearOverlay all reset");
+    }
     if (all) {
       clearMarkers();
     } else if (composer) {
@@ -55,6 +106,7 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     if (!composer) return null;
     const state = getComposerState(composer);
     const { text, map } = readComposer(composer);
+    const trimmedText = text.trim();
     const now = Date.now();
     const result = shouldTrigger({
       text,
@@ -64,6 +116,11 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     state.lastEvaluatedAt = now;
     state.lastHash = text;
     if (result.trigger) {
+      if (state.lastText !== trimmedText) {
+        state.lastText = trimmedText;
+        state.improveScore = computeImproveScore(trimmedText);
+      }
+
       const segments =
         Array.isArray(result.matchedSegments) && result.matchedSegments.length
           ? result.matchedSegments
@@ -88,13 +145,18 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
         state.lastSpans = spans;
         state.lastSegments = segments;
         state.lastMap = map;
-        queueOverlayRender(composer, text, spans, map);
-      } else {
+        queueOverlayRender(composer, text, spans, map, segments, {
+          improveScore: state.improveScore,
+          text: state.lastText,
+        });
+      } else if (!isModalActiveForComposer(composer)) {
         clearOverlay(composer);
       }
       state.lastFireAt = now;
     } else {
       clearOverlay(composer);
+      state.lastText = "";
+      state.improveScore = null;
     }
     console.debug(`${LOG_PREFIX} intent result`, result);
     return result;
@@ -132,9 +194,14 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
       if (spans.length) {
         state.lastSpans = spans;
         state.lastMap = map;
-        queueOverlayRender(composer, text, spans, map);
-      } else {
+        queueOverlayRender(composer, text, spans, map, segments, {
+          improveScore: state.improveScore,
+          text: state.lastText,
+        });
+      } else if (!isModalActiveForComposer(composer)) {
         clearOverlay(composer);
+      } else {
+        console.log("[VG][modal] refreshOverlay skipped clear due to active modal");
       }
     } catch (e) {
       console.debug(`${LOG_PREFIX} overlay refresh failed`, e);
@@ -189,11 +256,29 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
     state.scrollHandlers = handlers;
   }
 
+  function ensureMutationObserver(composer) {
+    if (!composer) return;
+    if ("value" in composer) return; // textarea/input – no need
+    const state = getComposerState(composer);
+    if (!state || state.mutationObserver) return;
+    try {
+      const observer = new MutationObserver(() => refreshOverlay(composer));
+      observer.observe(composer, {
+        childList: true,
+        subtree: false,
+      });
+      state.mutationObserver = observer;
+    } catch (e) {
+      console.debug(`${LOG_PREFIX} mutation observer failed`, e);
+    }
+  }
+
   const watcher = initComposerWatch({
     onComposerFound: (composer) => {
       evaluateComposer(composer);
       scheduleEvaluation(composer);
       ensureScrollObservers(composer);
+      ensureMutationObserver(composer);
     },
     onInput: (composer) => {
       const state = getComposerState(composer);
@@ -205,6 +290,8 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
           state.lastSpans = [];
           state.lastSegments = [];
           state.lastMap = null;
+          state.lastText = "";
+          state.improveScore = null;
         }
         return;
       }
@@ -219,6 +306,8 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
           state.lastSpans = [];
           state.lastSegments = [];
           state.lastMap = null;
+          state.lastText = "";
+          state.improveScore = null;
         }
       } else if (state) {
         state.lastMap = map;
@@ -226,8 +315,21 @@ const { ADAPTIVE_DEBOUNCE_MS } = ENH_CFG;
       evaluateComposer(composer);
       scheduleEvaluation(composer);
       ensureScrollObservers(composer);
+      ensureMutationObserver(composer);
     },
     onComposerBlur: (composer) => {
+      const activeEl = document.activeElement;
+      const modalActive = isModalActiveForComposer(composer);
+      console.log("[VG][modal] composer blur", {
+        composer,
+        modalActive,
+        activeElement: activeEl,
+        activeElementClass: activeEl?.className,
+      });
+      if (modalActive) {
+        console.log("[VG][modal] composer blur suppressed due to active modal");
+        return;
+      }
       clearOverlay(composer);
       clearComposerState(composer);
     },

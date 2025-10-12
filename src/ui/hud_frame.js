@@ -39,6 +39,25 @@
         background: transparent !important;
         image-rendering: -webkit-optimize-contrast;
       }
+      #typingDot {
+        display: none;
+        width: 100%;
+        height: 100%;
+        background: #542DF9;
+        border-radius: 50%;
+        box-shadow: 0 0 0 0 rgba(84,45,249,0.45);
+        pointer-events: none;
+      }
+      @keyframes vgHudTypingPulse {
+        0%, 100% {
+          box-shadow: 0 0 0 0 rgba(84,45,249,0.45);
+          opacity: 1;
+        }
+        50% {
+          box-shadow: 0 0 0 10px rgba(84,45,249,0);
+          opacity: 0.75;
+        }
+      }
       /* More visible, still geometry-safe */
 	#pill:hover,
 	#pill:focus-visible {
@@ -54,6 +73,7 @@
       @media (prefers-reduced-motion: reduce) {
         #pill { transition: none; }
         #pill:hover { filter: none; }
+        #typingDot { animation: none !important; }
       }
     `;
     document.head.appendChild(st);
@@ -61,17 +81,21 @@
 
   const pill = document.createElement('div');
   const icon = document.createElement('img');
+  const typingDot = document.createElement('div');
   pill.id = 'pill';
   icon.id = 'icon';
+  typingDot.id = 'typingDot';
 
   pill.setAttribute('role','button');
   pill.setAttribute('aria-label','Viberly');
   pill.tabIndex = 0;
   icon.style.pointerEvents = 'none';
+  typingDot.setAttribute('aria-hidden', 'true');
 
 
 
   document.body.appendChild(pill);
+  pill.appendChild(typingDot);
   pill.appendChild(icon);
 
 
@@ -103,6 +127,39 @@
 
 
 let __VG_LAST_SIZE__ = 34;
+let __VG_TYPING_ACTIVE__ = false;
+const prefersReducedMotion = (() => {
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)');
+  } catch {
+    return { matches: false, addEventListener: () => {}, addListener: () => {} };
+  }
+})();
+
+function applyTypingVisual() {
+  if (__VG_TYPING_ACTIVE__) {
+    typingDot.style.display = 'block';
+    icon.style.display = 'none';
+    if (!prefersReducedMotion.matches) {
+      typingDot.style.animation = 'vgHudTypingPulse 1.3s ease-in-out infinite';
+    } else {
+      typingDot.style.animation = 'none';
+    }
+  } else {
+    typingDot.style.display = 'none';
+    typingDot.style.animation = 'none';
+    icon.style.display = 'block';
+  }
+}
+
+try {
+  const cb = () => applyTypingVisual();
+  if (typeof prefersReducedMotion.addEventListener === 'function') {
+    prefersReducedMotion.addEventListener('change', cb);
+  } else if (typeof prefersReducedMotion.addListener === 'function') {
+    prefersReducedMotion.addListener(cb);
+  }
+} catch {}
 
 function paint({ signedIn, size, pillSize, iconIdle, iconActive }) {
   const hinted = Number(size ?? pillSize);
@@ -121,6 +178,7 @@ function paint({ signedIn, size, pillSize, iconIdle, iconActive }) {
   }
 
   pill.title = signedIn ? 'Quick Menu' : 'Please sign in to use Viberly';
+  applyTypingVisual();
 }
 
 
@@ -198,13 +256,21 @@ window.addEventListener('message', (ev) => {
 
   if (msg.type === 'PAINT_AUTH') {
     paint(msg);
-} else if (msg.type === 'DRAG_SILENCE' || msg.type === 'DRAG_CONFIRMED') {
-  // treat old DRAG_CONFIRMED as silence too
-  __VG_SUPPRESS_CLICK__ = true;
-} else if (msg.type === 'DRAG_UNSILENCE') {
-  __VG_SUPPRESS_CLICK__ = false;
-}
-
+    return;
+  }
+  if (msg.type === 'PILL_TYPING') {
+    __VG_TYPING_ACTIVE__ = !!msg.typing;
+    applyTypingVisual();
+    return;
+  }
+  if (msg.type === 'DRAG_SILENCE' || msg.type === 'DRAG_CONFIRMED') {
+    __VG_SUPPRESS_CLICK__ = true;
+    return;
+  }
+  if (msg.type === 'DRAG_UNSILENCE') {
+    __VG_SUPPRESS_CLICK__ = false;
+    return;
+  }
 });
 
 

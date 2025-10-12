@@ -2,6 +2,80 @@
 (() => {
   const APP = "viberly";
   const IFRAME_ID = "__vg_iframe_hud__";
+  const HUD_TYPING_MSG = "PILL_TYPING";
+  const HUD_TYPING_IDLE_MS = 600;
+  const HUD_COMPOSER_SELECTOR =
+    "textarea,input[type='text'],input[type='search'],input[type='email'],input[type='url'],[contenteditable='true'],[contenteditable=''],[role='textbox'],.ProseMirror";
+
+  let __vgHudFrameRef = null;
+  let __vgTypingState = false;
+  let __vgTypingTimer = null;
+  let __vgLastPostedTyping = null;
+
+  function hudIsComposerElement(node) {
+    if (!node) return false;
+    if (node.nodeType !== 1) {
+      node = node.parentElement || node.ownerDocument?.activeElement || null;
+      if (!node) return false;
+    }
+    try {
+      if (
+        node.matches &&
+        node.matches(HUD_COMPOSER_SELECTOR)
+      ) {
+        return true;
+      }
+    } catch {}
+    return !!node.closest?.(HUD_COMPOSER_SELECTOR);
+  }
+
+  function hudSyncTypingState(force = false) {
+    const frame = __vgHudFrameRef || document.getElementById(IFRAME_ID);
+    if (!frame || !frame.contentWindow) return;
+    if (!force && __vgTypingState === __vgLastPostedTyping) return;
+    try {
+      frame.contentWindow.postMessage(
+        {
+          source: "VG",
+          type: HUD_TYPING_MSG,
+          typing: __vgTypingState,
+        },
+        "*"
+      );
+      __vgLastPostedTyping = __vgTypingState;
+    } catch {}
+  }
+
+  function hudSetTypingState(active) {
+    const next = !!active;
+    if (__vgTypingState === next) return;
+    __vgTypingState = next;
+    if (!next && __vgTypingTimer) {
+      clearTimeout(__vgTypingTimer);
+      __vgTypingTimer = null;
+    }
+    hudSyncTypingState();
+  }
+
+  function hudBumpTypingTimer() {
+    if (__vgTypingTimer) clearTimeout(__vgTypingTimer);
+    __vgTypingTimer = setTimeout(() => {
+      __vgTypingTimer = null;
+      hudSetTypingState(false);
+    }, HUD_TYPING_IDLE_MS);
+  }
+
+  function hudHandleTypingEvent(event) {
+    const target = event?.target;
+    if (!target || !hudIsComposerElement(target)) return;
+    hudSetTypingState(true);
+    hudBumpTypingTimer();
+  }
+
+  if (!window.__VG_HUD_TYPING_WIRED__) {
+    window.__VG_HUD_TYPING_WIRED__ = true;
+    document.addEventListener("input", hudHandleTypingEvent, true);
+  }
 
   // --- Bridge: when iframe posts PILL_CLICK, ask BG (SoT) → open login popup if idle
   if (!window.__VG_PILL_CLICK_WIRED__) {
@@ -898,6 +972,8 @@
 
       // Always repaint auth state whenever the iframe reloads (e.g., after tab idle/discard)
       frame.addEventListener("load", () => {
+        __vgHudFrameRef = frame;
+        __vgLastPostedTyping = null;
         const icons = frame.__VG_ICONS__ || {};
         const iconIdle =
           icons.iconIdle || browser.runtime.getURL("assets/inactive-pill.svg");
@@ -919,6 +995,7 @@
             "*"
           );
         } catch {}
+        hudSyncTypingState(true);
       });
 
       // Handshake: when HUD is ready, paint + place strictly from DB
@@ -951,10 +1028,13 @@
               "*"
             );
           } catch {}
+          hudSyncTypingState(true);
         }
       };
       window.addEventListener("message", handleHudReady);
     } // <- close: if (!frame) { ... }
+    __vgHudFrameRef = frame;
+    hudSyncTypingState(true);
   }; // <- close: window.__VG_INIT_HUD__ = function ...
 
   // ---------------------------------------------------------
@@ -1000,6 +1080,7 @@
         "*"
       );
     } catch {}
+    hudSyncTypingState(true);
 
     // === If a user override set a window corner, always place window-fixed ===
     if (p && typeof p.anchor_corner === "string" && p.anchor_corner) {
@@ -1512,6 +1593,7 @@
           "*"
         );
       } catch {}
+      hudSyncTypingState(true);
 
       // base corner
       let left = "auto",
@@ -2116,5 +2198,6 @@
         "*"
       );
     } catch {}
+    hudSyncTypingState(true);
   });
 })();
