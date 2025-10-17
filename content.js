@@ -33,6 +33,25 @@
     browser.runtime.onMessage.addListener((msg) => {
       if (msg?.type === "VG_AUTH_CHANGED" || msg?.type === "AUTH_STATUS_PUSH") {
         window.__VG_SIGNED_IN_GLOBAL = !!msg.signedIn;
+        if (msg?.type === "AUTH_STATUS_PUSH" && msg.signedIn) {
+          try {
+            window.__VG_DISABLE_SEND_INTERCEPT = false;
+            window.__VG_SETTINGS_LOADED = false;
+          } catch {}
+          try {
+            import(browser.runtime.getURL("src/interceptsend.js"))
+              .then(() => {
+                try {
+                  window.__VG_INSTALL_INTERCEPT?.();
+                } catch {}
+              })
+              .catch(() => {
+                try {
+                  window.__VG_INSTALL_INTERCEPT?.();
+                } catch {}
+              });
+          } catch {}
+        }
       }
     });
 
@@ -144,13 +163,13 @@
       // >>> HARD KILL (must be set *before* 0.5 import) <<<
       try {
         Object.defineProperty(window, "__VG_DISABLE_SEND_INTERCEPT", {
-          value: true,
+          value: false,
           configurable: true,
           enumerable: false,
           writable: true,
         });
       } catch {
-        window.__VG_DISABLE_SEND_INTERCEPT = true;
+        window.__VG_DISABLE_SEND_INTERCEPT = false;
       }
 
       // 0) Ensure Settings UI (publishes window.__VG_SETTINGS)

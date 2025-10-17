@@ -506,6 +506,14 @@
       console.error("[VG] enhance underline failed (boot)", e);
     }
 
+    // 3.5) Ensure global send interceptors are active (key bindings + capture)
+    try {
+      await import(browser.runtime.getURL("src/interceptsend.js"));
+      console.debug("[VG] interceptsend ready (boot)");
+    } catch (e) {
+      console.error("[VG] interceptsend failed (boot)", e);
+    }
+
     // Start live placement subscription for *this* host+path (path-scoped; safe on all sites)
     try {
       const host = location.hostname.toLowerCase().replace(/^www\./, "");

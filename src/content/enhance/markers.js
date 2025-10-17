@@ -1,6 +1,8 @@
 // src/content/enhance/markers.js
 // Renders floating markers above action/recipient/topic spans.
 
+import { sendRuntimeMessage } from "./runtime.js";
+
 const MARKER_HOST_ID = "__vib_marker_host__";
 const MODAL_HOST_ID = "__vib_marker_modal_host__";
 const MARKER_CLASS = "vib-marker-dot";
@@ -15,7 +17,7 @@ const MIRROR_ID = "__vib_marker_mirror__";
 const DEBUG_MODAL =
   typeof window !== "undefined" && "VG_DEBUG_MODAL" in window
     ? Boolean(window.VG_DEBUG_MODAL)
-    : true;
+    : false;
 const modalDebugState = {
   locks: 0,
   pointerDown: false,
@@ -42,8 +44,12 @@ let hideModalTimer = null;
 const modalLocks = new Set();
 let modalPointerDown = false;
 let docPointerUpHandler = null;
+let docPointerDownHandler = null;
 let modalWheelTimer = null;
 let enhanceJobSeq = 0;
+const hoverUnlockTimers = new WeakMap();
+const hoverIntentTimers = new WeakMap();
+const HOVER_INTENT_DELAY_MS = 200;
 
 function updateComposerMeta(composer, patch = {}) {
   if (!composer) return null;
@@ -56,16 +62,6 @@ function updateComposerMeta(composer, patch = {}) {
   return next;
 }
 
-function getRuntime() {
-  if (typeof browser !== "undefined" && browser?.runtime?.sendMessage) {
-    return browser.runtime;
-  }
-  if (typeof chrome !== "undefined" && chrome?.runtime?.sendMessage) {
-    return chrome.runtime;
-  }
-  return null;
-}
-
 function rerenderActiveModal(composer) {
   if (!activeModal || activeModal.composer !== composer) return;
   const { element } = activeModal;
@@ -75,6 +71,7 @@ function rerenderActiveModal(composer) {
 }
 
 const composerIds = new WeakMap();
+const composerById = new Map();
 let markerSeq = 0;
 
 function ensureHost(doc = document) {
@@ -455,11 +452,12 @@ function getComposerId(composer) {
   if (!id) {
     id = `cmp-${++markerSeq}`;
     composerIds.set(composer, id);
+    composerById.set(id, composer);
   }
   return id;
 }
 
-function clearMarkersForComposer(host, composer) {
+function clearMarkersForComposer(host, composer, { preserveSuggestion = false } = {}) {
   const id = composerIds.get(composer);
   if (!id) return;
   const stack = new Error().stack;
@@ -476,15 +474,34 @@ function clearMarkersForComposer(host, composer) {
     .forEach((node) => {
       node.remove();
     });
-  if (activeModal?.composer === composer) {
-    debugModal("clearMarkersForComposer:closing active modal", {
-      composer,
-      id,
-      stack: new Error().stack,
+  if (!preserveSuggestion) {
+    if (activeModal?.composer === composer) {
+      debugModal("clearMarkersForComposer:closing active modal", {
+        composer,
+        id,
+        stack: new Error().stack,
+      });
+      hideSuggestionModal(true);
+    }
+    composerMeta.delete(composer);
+    requestAnimationFrame(() => {
+      const stillPresent = host.querySelector(
+        `.${WRAPPER_CLASS}[data-cmp="${id}"]`
+      );
+      if (stillPresent) return;
+      try {
+        window.postMessage(
+          {
+            source: "VG",
+            type: "HUD_INTENT_STATE",
+            active: false,
+            cmp: id,
+          },
+          "*"
+        );
+      } catch {}
     });
-    hideSuggestionModal(true);
   }
-  composerMeta.delete(composer);
 }
 
 const DOT_SIZE_BUCKETS = [6, 5, 4, 3];
@@ -509,9 +526,9 @@ function opacityForSentence(index, total) {
   if (index < 0 || total <= 0) return 1;
   const rank = total - 1 - index;
   if (rank <= 0) return 1;
-  if (rank === 1) return 0.8;
-  if (rank === 2) return 0.6;
-  return 0.4;
+  if (rank === 1) return 0.9;
+  if (rank === 2) return 0.8;
+  return 0.7;
 }
 
 function dotSizeForSentence(index, total) {
@@ -532,13 +549,25 @@ export function updateMarkers({
   improveScore = null,
   rawText = "",
 }) {
-  if (!composer || !text) return;
+  if (!composer) return;
   const doc = composer.ownerDocument || document;
   ensureStyles(doc);
   const host = ensureHost(doc);
-  clearMarkersForComposer(host, composer);
-  if (!spans || !spans.length) return;
+  const hasSpans = Array.isArray(spans) && spans.length > 0;
+  clearMarkersForComposer(host, composer, { preserveSuggestion: hasSpans });
+  if (!hasSpans) return;
   const id = getComposerId(composer);
+  try {
+    window.postMessage(
+      {
+        source: "VG",
+        type: "HUD_INTENT_STATE",
+        active: true,
+        cmp: id,
+      },
+      "*"
+    );
+  } catch {}
 
   const prevMeta = composerMeta.get(composer) || {};
   const normalizedText = String(rawText || "");
@@ -583,7 +612,7 @@ export function updateMarkers({
     wrapper.className = WRAPPER_CLASS;
     wrapper.dataset.cmp = id;
     wrapper.style.left = `${rect.left + rect.width / 2}px`;
-    wrapper.style.top = `${rect.top - (-3)}px`;
+    wrapper.style.top = `${rect.top - (-3.5)}px`;
     wrapper.style.opacity = String(Math.max(opacity, 0.35));
     host.appendChild(wrapper);
 
@@ -596,10 +625,49 @@ export function updateMarkers({
     dot.style.opacity = String(opacity);
     wrapper.appendChild(dot);
 
-    const handleEnter = () => {
-      debugModal("wrapper:pointerenter", { wrapper, composer });
+    const cancelPendingUnlock = () => {
+      const timer = hoverUnlockTimers.get(wrapper);
+      if (timer) {
+        clearTimeout(timer);
+        hoverUnlockTimers.delete(wrapper);
+      }
+    };
+    const cancelHoverIntent = () => {
+      const timer = hoverIntentTimers.get(wrapper);
+      if (timer) {
+        clearTimeout(timer);
+        hoverIntentTimers.delete(wrapper);
+      }
+    };
+    const triggerModalOpen = (reason = "intent-delay") => {
+      cancelHoverIntent();
+      cancelPendingUnlock();
+      debugModal("wrapper:open", { wrapper, composer, reason });
       lockModal(wrapper);
       showSuggestionModal(composer, wrapper);
+    };
+
+    const handleEnter = (event) => {
+      const buttons =
+        typeof event?.buttons === "number" ? event.buttons : 0;
+      debugModal("wrapper:pointerenter", {
+        wrapper,
+        composer,
+        buttons,
+        type: event?.type,
+      });
+      cancelPendingUnlock();
+      cancelHoverIntent();
+      if (buttons > 0) {
+        debugModal("wrapper:pointerenter skipped due to buttons", {
+          buttons,
+        });
+        return;
+      }
+      const timer = setTimeout(() => {
+        triggerModalOpen("intent-delay");
+      }, HOVER_INTENT_DELAY_MS);
+      hoverIntentTimers.set(wrapper, timer);
     };
     const handleLeave = (event) => {
       const nextTarget = event?.relatedTarget;
@@ -608,14 +676,38 @@ export function updateMarkers({
         relatedTarget: nextTarget,
         coords: event ? { x: event.clientX, y: event.clientY } : null,
       });
+      cancelHoverIntent();
       if (isWithinActiveModal(nextTarget)) return;
-      unlockModal(wrapper);
+      cancelPendingUnlock();
+      const timer = setTimeout(() => {
+        hoverUnlockTimers.delete(wrapper);
+        const modalEl = getActiveModalElement();
+        const hoveringWrapper = wrapper?.matches?.(":hover");
+        const hoveringModal = modalEl?.matches?.(":hover");
+        if (hoveringWrapper || hoveringModal) {
+          debugModal("wrapper:pointerleave cancel unlock due to hover");
+          return;
+        }
+        unlockModal(wrapper);
+      }, 120);
+      hoverUnlockTimers.set(wrapper, timer);
+    };
+    const handlePointerDown = (event) => {
+      if (event?.button !== 0 && event?.button !== undefined) return;
+      debugModal("wrapper:pointerdown", {
+        wrapper,
+        composer,
+        button: event?.button,
+      });
+      triggerModalOpen("pointerdown");
     };
     wrapper.addEventListener("pointerenter", handleEnter);
     wrapper.addEventListener("mouseenter", handleEnter);
     wrapper.addEventListener("pointerleave", handleLeave);
     wrapper.addEventListener("mouseleave", handleLeave);
+    wrapper.addEventListener("pointerdown", handlePointerDown);
   });
+
 }
 
 export function clearMarkers(composer) {
@@ -813,6 +905,17 @@ function showSuggestionModal(composer, targetEl) {
         doc.addEventListener("pointerup", docPointerUpHandler, true);
         debugModal("modal:pointerup handler attached");
       }
+      if (!docPointerDownHandler) {
+        docPointerDownHandler = (evt) => {
+          const target = evt?.target;
+          if (!isWithinActiveModal(target) && !isWithinActiveTrigger(target)) {
+            debugModal("doc:pointerdown outside modal", { target });
+            hideSuggestionModal(true);
+          }
+        };
+        doc.addEventListener("pointerdown", docPointerDownHandler, true);
+        debugModal("modal:pointerdown outside handler attached");
+      }
     };
     const handleWheel = () => {
       lockModal(modal);
@@ -947,6 +1050,11 @@ function hideSuggestionModal(immediate = false) {
     doc.removeEventListener("pointerup", docPointerUpHandler, true);
     docPointerUpHandler = null;
     debugModal("hideSuggestionModal:removed pointerup handler");
+  }
+  if (docPointerDownHandler && doc) {
+    doc.removeEventListener("pointerdown", docPointerDownHandler, true);
+    docPointerDownHandler = null;
+    debugModal("hideSuggestionModal:removed pointerdown handler");
   }
   if (immediate) {
     element.remove();
@@ -1140,41 +1248,11 @@ function startEnhanceFlow(composer, doc) {
 }
 
 function callBackgroundEnhance(text) {
-  const runtime = getRuntime();
-  if (!runtime || typeof runtime.sendMessage !== "function") {
-    return Promise.resolve({ ok: false, error: "BACKGROUND_UNAVAILABLE" });
-  }
   const message = {
     type: "VG_AI_ENHANCE",
     payload: { text, surface: "composer" },
   };
-  const isBrowserRuntime =
-    typeof browser !== "undefined" && runtime === browser.runtime;
-  if (isBrowserRuntime) {
-    return runtime
-      .sendMessage(message)
-      .then((resp) => resp || null)
-      .catch((err) => ({
-        ok: false,
-        error: err?.message || "BACKGROUND_UNAVAILABLE",
-      }));
-  }
-  return new Promise((resolve) => {
-    try {
-      runtime.sendMessage(message, (resp) => {
-        const err =
-          (typeof chrome !== "undefined" && chrome.runtime?.lastError?.message) ||
-          null;
-        if (err) {
-          resolve({ ok: false, error: err });
-        } else {
-          resolve(resp || null);
-        }
-      });
-    } catch (e) {
-      resolve({ ok: false, error: e?.message || "BACKGROUND_UNAVAILABLE" });
-    }
-  });
+  return sendRuntimeMessage(message).then((resp) => resp || null);
 }
 
 function handleReplaceRequest(composer) {
@@ -1233,3 +1311,27 @@ function applyEnhancedToComposer(composer, enhancedRaw) {
 export function isModalActiveForComposer(composer) {
   return Boolean(activeModal && activeModal.composer === composer);
 }
+
+export function getMarkerComposerId(composer) {
+  return getComposerId(composer);
+}
+
+function handleHudRequests(event) {
+  const msg = event?.data || {};
+  if (!msg || msg.source !== "VG") return;
+  if (msg.type === "OPEN_SUGGESTION_MODAL") {
+    const id = String(msg.cmp || "");
+    if (!id) return;
+    const composer = composerById.get(id);
+    if (!composer) return;
+    const doc = composer.ownerDocument || document;
+    const wrapper = doc.querySelector(
+      `.${WRAPPER_CLASS}[data-cmp="${id}"]`
+    );
+    if (wrapper) {
+      showSuggestionModal(composer, wrapper);
+    }
+  }
+}
+
+window.addEventListener("message", handleHudRequests);

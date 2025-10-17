@@ -3,14 +3,28 @@
   const APP = "viberly";
   const IFRAME_ID = "__vg_iframe_hud__";
   const HUD_TYPING_MSG = "PILL_TYPING";
-  const HUD_TYPING_IDLE_MS = 600;
+  const HUD_SUGGEST_MSG = "PILL_SUGGEST";
+  const HUD_INTENT_EVENT = "HUD_INTENT_STATE";
+  const HUD_SUGGEST_CLICK_MSG = "PILL_SUGGEST_CLICK";
+  const HUD_OPEN_MODAL_MSG = "OPEN_SUGGESTION_MODAL";
+  const HUD_TYPING_IDLE_MS = 1000;
   const HUD_COMPOSER_SELECTOR =
     "textarea,input[type='text'],input[type='search'],input[type='email'],input[type='url'],[contenteditable='true'],[contenteditable=''],[role='textbox'],.ProseMirror";
+  const HUD_BADGE_WIDTH_DELTA = 18;
+  const BADGE_ID = "__vg_hud_intent_badge__";
+  const BADGE_SIZE = 20;
+  const BADGE_OFFSET_PX = 8;
+  const MARKER_HOST_ID = "__vib_marker_host__";
+  const MARKER_HIT_SELECTOR = ".vib-marker-hit";
 
   let __vgHudFrameRef = null;
   let __vgTypingState = false;
   let __vgTypingTimer = null;
   let __vgLastPostedTyping = null;
+  let __vgSuggestionActive = false;
+  let __vgSuggestionComposerId = null;
+  let __vgLastPostedSuggestion = null;
+  let __vgHudBadgeRef = null;
 
   function hudIsComposerElement(node) {
     if (!node) return false;
@@ -44,6 +58,7 @@
       );
       __vgLastPostedTyping = __vgTypingState;
     } catch {}
+    hudSyncSuggestionState(force);
   }
 
   function hudSetTypingState(active) {
@@ -65,16 +80,229 @@
     }, HUD_TYPING_IDLE_MS);
   }
 
-  function hudHandleTypingEvent(event) {
-    const target = event?.target;
-    if (!target || !hudIsComposerElement(target)) return;
+  function hudNotifyTyping() {
     hudSetTypingState(true);
     hudBumpTypingTimer();
   }
 
-  if (!window.__VG_HUD_TYPING_WIRED__) {
-    window.__VG_HUD_TYPING_WIRED__ = true;
-    document.addEventListener("input", hudHandleTypingEvent, true);
+  function hudSyncSuggestionState(force = false) {
+    const frame = __vgHudFrameRef || document.getElementById(IFRAME_ID);
+    if (!frame || !frame.contentWindow) return;
+    const toggled = __vgSuggestionActive !== __vgLastPostedSuggestion;
+    if (!force && !toggled) return;
+    try {
+      frame.contentWindow.postMessage(
+        {
+          source: "VG",
+          type: HUD_SUGGEST_MSG,
+          suggestion: __vgSuggestionActive,
+        },
+        "*"
+      );
+      __vgLastPostedSuggestion = __vgSuggestionActive;
+    } catch {}
+  }
+
+  function hudApplyFrameSize(frame, pillSize, suggestActive = false) {
+    if (!frame) return;
+    const base = vgSafeSize(pillSize);
+    const width = base + (suggestActive ? HUD_BADGE_WIDTH_DELTA : 0);
+    const widthPx = `${width}px`;
+    const heightPx = `${base}px`;
+    if (frame.style.width !== widthPx) frame.style.width = widthPx;
+    if (frame.style.height !== heightPx) frame.style.height = heightPx;
+    frame.__VG_BASE_PILL_SIZE__ = base;
+    hudSyncBadge();
+  }
+
+  function hudRefreshFrameSize() {
+    const frame = __vgHudFrameRef || document.getElementById(IFRAME_ID);
+    if (!frame) return;
+    const base = frame.__VG_BASE_PILL_SIZE__;
+    if (!base) return;
+    hudApplyFrameSize(frame, base, __vgSuggestionActive);
+  }
+
+  function ensureHudBadge() {
+    if (__vgHudBadgeRef && document.body.contains(__vgHudBadgeRef)) {
+      return __vgHudBadgeRef;
+    }
+    const existing = document.getElementById(BADGE_ID);
+    const badge = existing || document.createElement("div");
+    badge.id = BADGE_ID;
+    badge.style.cssText = [
+      "position:fixed",
+      `width:${BADGE_SIZE}px`,
+      `height:${BADGE_SIZE}px`,
+      "left:0",
+      "top:0",
+      "border-radius:999px",
+      "background:#542DF9",
+      "box-shadow:0 4px 12px rgba(84,45,249,0.35)",
+      "display:none",
+      "align-items:center",
+      "justify-content:center",
+      "color:#fff",
+      "font-size:11px",
+      "font-weight:600",
+      "cursor:pointer",
+      "pointer-events:auto",
+      "z-index:2147483601",
+      "transition:transform 0.18s ease, opacity 0.18s ease",
+    ].join(";");
+    badge.setAttribute("role", "button");
+    badge.setAttribute("aria-label", "Viberly suggestion ready");
+    badge.tabIndex = 0;
+
+    if (!badge.firstElementChild) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("width", "12");
+      svg.setAttribute("height", "12");
+      svg.innerHTML =
+        '<path fill="currentColor" d="M8 1.5a4.5 4.5 0 0 0-2.45 8.3c.19.13.31.35.31.58v.87c0 .28.22.5.5.5h3.28c.28 0 .5-.22.5-.5v-.87c0-.23.12-.45.31-.58A4.5 4.5 0 0 0 8 1.5Zm-.75 10.25c0-.41.34-.75.75-.75s.75.34.75.75-.34.75-.75.75-.75-.34-.75-.75Zm.75 2.25a.75.75 0 0 1-.75-.75h1.5a.75.75 0 0 1-.75.75Z"/>';
+      svg.setAttribute("aria-hidden", "true");
+      badge.appendChild(svg);
+    }
+
+    const clickHandler = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      window.postMessage(
+        {
+          source: "VG",
+          type: HUD_SUGGEST_CLICK_MSG,
+          cmp: __vgSuggestionComposerId || null,
+        },
+        "*"
+      );
+    };
+    badge.onclick = clickHandler;
+    badge.onkeydown = (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        clickHandler(event);
+      }
+    };
+
+    if (!document.body.contains(badge)) {
+      (document.body || document.documentElement).appendChild(badge);
+    }
+    __vgHudBadgeRef = badge;
+    return badge;
+  }
+
+  function hudSyncBadge() {
+    const badge = ensureHudBadge();
+    const frame = __vgHudFrameRef || document.getElementById(IFRAME_ID);
+    if (!frame || !frame.isConnected) {
+      badge.style.display = "none";
+      return;
+    }
+    const rect = frame.getBoundingClientRect();
+    if (__vgSuggestionActive) {
+      badge.style.display = "flex";
+      const proposedLeft = Math.round(rect.left - BADGE_OFFSET_PX - BADGE_SIZE);
+      const left =
+        proposedLeft >= 0
+          ? proposedLeft
+          : Math.round(rect.right + BADGE_OFFSET_PX);
+      badge.style.left = `${left}px`;
+      badge.style.top = `${Math.round(
+        rect.top + rect.height / 2 - BADGE_SIZE / 2
+      )}px`;
+      badge.style.opacity = "1";
+      badge.style.transform = "scale(1)";
+    } else {
+      badge.style.opacity = "0";
+      badge.style.transform = "scale(0.9)";
+      badge.style.display = "none";
+    }
+  }
+
+  function hudSetSuggestionActive(active, composerId = null) {
+    const next = !!active;
+    const id = next
+      ? (composerId != null ? String(composerId) : null)
+      : null;
+    const prevActive = __vgSuggestionActive;
+    const prevComposer = __vgSuggestionComposerId;
+    if (
+      prevActive === next &&
+      (prevComposer || null) === id
+    ) {
+      return;
+    }
+    __vgSuggestionActive = next;
+    __vgSuggestionComposerId = id;
+    hudRefreshFrameSize();
+    hudSyncBadge();
+    hudSyncSuggestionState();
+  }
+
+  let __vgTypingComposer = null;
+  let __vgTypingComposerCleanup = null;
+
+  function hudDetachTypingComposer(options = {}) {
+    const preserveSuggestion = !!options.preserveSuggestion;
+    if (__vgTypingComposerCleanup) {
+      try {
+        __vgTypingComposerCleanup();
+      } catch {}
+      __vgTypingComposerCleanup = null;
+    }
+    __vgTypingComposer = null;
+    if (!preserveSuggestion) {
+      hudSetSuggestionActive(false, null);
+    }
+    hudSetTypingState(false);
+  }
+
+  function hudAttachTypingComposer(composer) {
+    if (__vgTypingComposer === composer) return;
+    if (!composer) {
+      hudDetachTypingComposer();
+      return;
+    }
+    hudDetachTypingComposer({ preserveSuggestion: true });
+    if (!hudIsComposerElement(composer)) return;
+    const handleInput = () => hudNotifyTyping();
+    const handleKeydown = (event) => {
+      if (!event) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const key = event.key || "";
+      if (
+        key.length === 1 ||
+        key === "Backspace" ||
+        key === "Delete" ||
+        key === "Enter" ||
+        key === "Tab" ||
+        key === " "
+      ) {
+        hudNotifyTyping();
+      }
+    };
+    const handleCompositionEnd = () => hudNotifyTyping();
+    const handleBlur = () => hudSetTypingState(false);
+    try {
+      composer.addEventListener("input", handleInput, true);
+      composer.addEventListener("keydown", handleKeydown, true);
+      composer.addEventListener("compositionend", handleCompositionEnd, true);
+      composer.addEventListener("blur", handleBlur, true);
+      __vgTypingComposer = composer;
+      __vgTypingComposerCleanup = () => {
+        composer.removeEventListener("input", handleInput, true);
+        composer.removeEventListener("keydown", handleKeydown, true);
+        composer.removeEventListener(
+          "compositionend",
+          handleCompositionEnd,
+          true
+        );
+        composer.removeEventListener("blur", handleBlur, true);
+      };
+    } catch {
+      hudDetachTypingComposer();
+    }
   }
 
   // --- Bridge: when iframe posts PILL_CLICK, ask BG (SoT) → open login popup if idle
@@ -284,6 +512,27 @@
     window.addEventListener("message", (ev) => {
       const m = ev?.data || {};
       if (!m || m.source !== "VG") return;
+
+      if (m.type === HUD_INTENT_EVENT) {
+        hudSetSuggestionActive(!!m.active, m.cmp || null);
+        return;
+      }
+
+      if (m.type === HUD_SUGGEST_CLICK_MSG) {
+        if (__vgSuggestionActive && __vgSuggestionComposerId) {
+          try {
+            window.postMessage(
+              {
+                source: "VG",
+                type: HUD_OPEN_MODAL_MSG,
+                cmp: __vgSuggestionComposerId,
+              },
+              "*"
+            );
+          } catch {}
+        }
+        return;
+      }
 
       // Single-click → open
       if (m.type === "PILL_CLICK") {
@@ -955,6 +1204,7 @@
         "opacity:1",
         "box-shadow:none", // optional clarity
       ].join(";");
+      frame.__VG_BASE_PILL_SIZE__ = initialSize;
 
       // CSP: we only postMessage; no DOM access needed
       frame.sandbox = "allow-scripts";
@@ -1625,12 +1875,19 @@
       frame.style.right = right;
       frame.style.top = top;
       frame.style.bottom = bottom;
-      frame.style.width = `${pillSize}px`;
-      frame.style.height = `${pillSize}px`;
+      hudApplyFrameSize(frame, pillSize, __vgSuggestionActive);
       frame.style.display = "block";
       frame.style.transform = `translate(${Math.round(dx)}px, ${Math.round(
         dy
       )}px)`; // ← apply nudges
+      hudSyncBadge();
+      hudAttachTypingComposer(
+        findComposerScoped(
+          document,
+          placement?.composer_selector,
+          placement?.slot
+        )
+      );
       return true;
     }
 
@@ -1715,9 +1972,9 @@
       setStyle(frame, "right", "auto");
       setStyle(frame, "bottom", "auto");
       setStyle(frame, "transform", "none");
-      setStyle(frame, "width", pillSize + "px");
-      setStyle(frame, "height", pillSize + "px");
+      hudApplyFrameSize(frame, pillSize, __vgSuggestionActive);
       setStyle(frame, "display", "block");
+      hudSyncBadge();
     }
 
     // ---- Strategies (no internal fallbacks) ----
@@ -1760,15 +2017,16 @@
 
       const x = rX.left + rX.width / 2 + ox + voX;
       const y = rY.bottom + vgSafeGutter(p.gutter, 14) + oy + voY;
+      const pillSize = vgSafeSize(p.pill_size);
 
       setStyle(frame, "left", Math.round(x + vgSafeNum(p.dx, 0)) + "px");
       setStyle(frame, "top", Math.round(y + vgSafeNum(p.dy, 0)) + "px");
       setStyle(frame, "right", "auto");
       setStyle(frame, "bottom", "auto");
       setStyle(frame, "transform", "translate(-50%, 0)");
-      setStyle(frame, "width", vgSafeSize(p.pill_size) + "px");
-      setStyle(frame, "height", vgSafeSize(p.pill_size) + "px");
+      hudApplyFrameSize(frame, pillSize, __vgSuggestionActive);
       setStyle(frame, "display", "block");
+      hudSyncBadge();
     }
 
     function placeSendLeft(doc, frameElForOffset, opts = {}) {
@@ -1798,9 +2056,9 @@
       setStyle(frame, "right", "auto");
       setStyle(frame, "bottom", "auto");
       setStyle(frame, "transform", "translate(-100%, -50%)");
-      setStyle(frame, "width", pillSize + "px");
-      setStyle(frame, "height", pillSize + "px");
+      hudApplyFrameSize(frame, pillSize, __vgSuggestionActive);
       setStyle(frame, "display", "block");
+      hudSyncBadge();
     }
 
     // === anchor-exact — use the *exact* element (no wrapper heuristics); returns boolean ===
@@ -1869,9 +2127,9 @@
       setStyle(frame, "right", "auto");
       setStyle(frame, "bottom", "auto");
       setStyle(frame, "transform", "none");
-      setStyle(frame, "width", size + "px");
-      setStyle(frame, "height", size + "px");
+      hudApplyFrameSize(frame, size, __vgSuggestionActive);
       setStyle(frame, "display", "block");
+      hudSyncBadge();
 
       vgStartSticky(pLocal, el);
       return true;
@@ -1909,6 +2167,11 @@
           row?.ownerDocument?.defaultView?.frameElement || frameEl || null;
         placeAnchorRowBR(doc, localFrame);
         vgStartSticky(p, row);
+        if (!opts.singleShot) {
+          hudAttachTypingComposer(
+            findComposerScoped(doc, p.composer_selector, p.slot)
+          );
+        }
         return true;
       }
 
@@ -1934,6 +2197,9 @@
           null;
         placeCenterBelow(doc, localFrame);
         vgStartSticky(p, anchorForSticky);
+        if (!opts.singleShot) {
+          hudAttachTypingComposer(comp);
+        }
         return true;
       }
 
@@ -1945,6 +2211,11 @@
           row?.ownerDocument?.defaultView?.frameElement || frameEl || null;
         placeAnchorRowBR(doc, localFrame);
         vgStartSticky(p, row);
+        if (!opts.singleShot) {
+          hudAttachTypingComposer(
+            findComposerScoped(doc, p.composer_selector, p.slot)
+          );
+        }
         return true;
       }
 
@@ -1952,7 +2223,12 @@
       if (strat === "anchor-exact") {
         const local = pickRootByIframeSelector(p.iframe_selector || "");
         const ok = placeAnchorExact(local.doc, local.frameEl, p); // returns boolean
-        return !!ok; // only report success when we actually placed
+        if (ok && !opts.singleShot) {
+          hudAttachTypingComposer(
+            findComposerScoped(local.doc, p.composer_selector, p.slot)
+          );
+        }
+        return !!ok;
       }
 
       // 3c) send-button — anchor on the button; composer is optional
@@ -1972,6 +2248,9 @@
           send?.ownerDocument?.defaultView?.frameElement || frameEl || null;
         placeSendLeft(doc, localFrame, { sendEl: send, compEl: comp });
         vgStartSticky(p, send);
+        if (!opts.singleShot) {
+          hudAttachTypingComposer(comp);
+        }
         return true;
       }
 
@@ -1996,6 +2275,9 @@
           target?.ownerDocument?.defaultView?.frameElement || frameEl || null;
         placeSendLeft(doc, localFrame, { sendEl: target, compEl: comp });
         vgStartSticky(p, target);
+        if (!opts.singleShot) {
+          hudAttachTypingComposer(comp);
+        }
         return true;
       }
 
@@ -2020,6 +2302,9 @@
         // Use the same geometry (left-of anchor, vertically centered)
         placeSendLeft(doc, localFrame, { sendEl: plus, compEl: comp });
         vgStartSticky(p, plus);
+        if (!opts.singleShot) {
+          hudAttachTypingComposer(comp);
+        }
         return true;
       }
 
@@ -2146,6 +2431,7 @@
     // 🔒 lock for this route (prevents mid-session jumps)
     __vg_locked__ = !!placed;
     __vg_locked_route__ = __vgRouteKey__();
+    if (!placed) hudAttachTypingComposer(null);
     return placed;
   };
 

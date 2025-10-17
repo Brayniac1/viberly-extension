@@ -228,6 +228,7 @@ function getActiveDomain() {
 async function createGuard({
   title,
   body,
+  preview = null,
   variables = [],
   tags = [],
   site_category = "programming",
@@ -240,6 +241,8 @@ async function createGuard({
       user_id: user.id,
       title,
       body,
+      preview:
+        typeof preview === "string" ? preview.trim().slice(0, 100) : null,
       variables,
       tags,
       site_category,
@@ -253,9 +256,15 @@ async function createGuard({
 }
 async function updateGuard(guardId, patch) {
   const user = await getUser();
+  const updateFields = { ...patch };
+  if (typeof patch?.preview === "string") {
+    updateFields.preview = patch.preview.trim().slice(0, 100);
+  } else if (patch && Object.prototype.hasOwnProperty.call(patch, "preview") && patch.preview === null) {
+    updateFields.preview = null;
+  }
   const { error, data } = await db
     .from("vg_guards")
-    .update({ ...patch })
+    .update(updateFields)
     .eq("id", guardId)
     .eq("user_id", user.id)
     .select("*")
@@ -297,7 +306,7 @@ async function listGuards({
   // base select (explicit columns to keep payload small)
   let q = db
     .from("vg_guards")
-    .select("id,title,body,tags,status,site_category,created_at,updated_at")
+    .select("id,title,preview,body,tags,status,site_category,created_at,updated_at")
     .eq("user_id", user.id)
     .eq("site_category", site_category);
 
