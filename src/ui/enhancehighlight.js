@@ -616,7 +616,11 @@
     pillStopEnhancing();
 
     if (!resp || !resp.ok || !resp.text) {
-      toast(resp?.error || "Enhance failed.", 1600);
+      let message = resp?.error || "Enhance failed.";
+      if (resp?.error === "AI_ENHANCE_LIMIT") {
+        message = "You’ve hit your Enhance limit. Upgrade to keep using this feature.";
+      }
+      toast(message, 1600);
       hidePill();
       return;
     }

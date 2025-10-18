@@ -325,7 +325,6 @@ async function showPlainFallback(opts = {}) {
 // ---------- Shadow-DOM renderer (usage always shown as limit/limit) ----------
 export async function show(opts = {}) {
   try {
-    console.log("[VG][paywall] show() start", opts);
 
     const { tier, used, quick, limit, reason } = await resolvePlanAndUsage(
       opts
@@ -354,10 +353,8 @@ export async function show(opts = {}) {
 
     const host = el("div", { id: "vg-paywall-host" });
     root.appendChild(host);
-    console.log("[VG][paywall] host append OK");
 
     const sh = host.attachShadow({ mode: "open" });
-    console.log("[VG][paywall] shadow attached");
 
     const css = `
       .overlay{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55)}
@@ -526,7 +523,6 @@ export async function show(opts = {}) {
     try {
       window.__VG?.log?.("paywall_shown", { reason, tier });
     } catch {}
-    console.log("[VG][paywall] handlers wired (done)");
   } catch (err) {
     console.warn("[VG][paywall] render failed:", err);
     showPlainFallback(opts);

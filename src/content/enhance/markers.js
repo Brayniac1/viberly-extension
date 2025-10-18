@@ -1217,9 +1217,13 @@ function startEnhanceFlow(composer, doc) {
     const current = composerMeta.get(composer);
     if (!current || current.jobId !== jobId) return;
     if (!resp || !resp.ok || !resp.text) {
+      let message = resp?.error || "Enhance failed. Try again.";
+      if (resp?.error === "AI_ENHANCE_LIMIT") {
+        message = "You’ve hit your Enhance limit. Upgrade to keep using this feature.";
+      }
       updateComposerMeta(composer, {
         status: "error",
-        error: resp?.error || "Enhance failed. Try again.",
+        error: message,
         jobId,
       });
       rerenderActiveModal(composer);
@@ -1238,9 +1242,13 @@ function startEnhanceFlow(composer, doc) {
   }).catch((err) => {
     const current = composerMeta.get(composer);
     if (!current || current.jobId !== jobId) return;
+    let message = err?.message || "Enhance failed. Try again.";
+    if (String(err?.message || "").toUpperCase() === "AI_ENHANCE_LIMIT") {
+      message = "You’ve hit your Enhance limit. Upgrade to keep using this feature.";
+    }
     updateComposerMeta(composer, {
       status: "error",
-      error: err?.message || "Enhance failed. Try again.",
+      error: message,
       jobId,
     });
     rerenderActiveModal(composer);

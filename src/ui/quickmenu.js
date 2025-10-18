@@ -3075,10 +3075,6 @@
               const gate = await sendBG("VG_CAN_INSERT_CUSTOM", {
                 guard_id: String(cg.id),
               });
-              console.log("[VG][quickmenu] custom insert gate check", {
-                guardId: String(cg.id),
-                gate,
-              });
               if (shouldBlockAutoGuardAtLimit(cg, gate)) {
                 __qmLog("CG insert: auto-generated limit enforced", {
                   guardId: String(cg.id),
@@ -3271,10 +3267,6 @@
             try {
               const gate = await sendBG("VG_CAN_INSERT_CUSTOM", {
                 guard_id: String(item.id),
-              });
-              console.log("[VG][quickmenu] team insert gate check", {
-                guardId: String(item.id),
-                gate,
               });
               if (shouldBlockAutoGuardAtLimit(item, gate)) {
                 __qmLog("Team insert: auto-generated limit enforced", {

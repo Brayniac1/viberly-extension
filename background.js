@@ -1104,8 +1104,23 @@ async function __aiEnhanceInvoke(payload) {
     try {
       text = await error?.context?.response?.text();
     } catch {}
-    const msg = text || error?.message || `EF_STATUS_${status || "UNKNOWN"}`;
-    throw new Error(msg);
+    let parsed = null;
+    if (text) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = null;
+      }
+    }
+    const msg =
+      (parsed && typeof parsed.error === "string" && parsed.error) ||
+      (text && !parsed ? text : null) ||
+      error?.message ||
+      `EF_STATUS_${status || "UNKNOWN"}`;
+    const errObj = new Error(msg || "AI_ENHANCE_ERROR");
+    if (parsed) errObj.details = parsed;
+    if (status) errObj.status = status;
+    throw errObj;
   }
   return data || {};
 }
@@ -2670,6 +2685,33 @@ async function handleMessage(msg, _host = "", sender = null) {
 
         return { ok: true, text: enhanced, meta: out.meta || null };
       } catch (e) {
+        const limitHit =
+          e?.details?.error === "AI_ENHANCE_LIMIT" ||
+          String(e?.message || "").toUpperCase() === "AI_ENHANCE_LIMIT";
+        if (limitHit) {
+          try {
+            const tabId = sender?.tab?.id;
+            if (tabId) {
+              browser.tabs
+                .sendMessage(tabId, {
+                  type: "VG_PAYWALL_SHOW",
+                  payload: {
+                    reason: "ai_enhance_limit",
+                    tier: e?.details?.tier || null,
+                    total_used: e?.details?.total_used ?? null,
+                    month_used: e?.details?.month_used ?? null,
+                    month_reset: e?.details?.month_reset ?? null,
+                  },
+                })
+                .catch(() => void browser.runtime.lastError);
+            }
+          } catch {}
+          return {
+            ok: false,
+            error: "AI_ENHANCE_LIMIT",
+            meta: e?.details || null,
+          };
+        }
         console.warn("[BG] VG_AI_ENHANCE error:", e);
         return { ok: false, error: String(e?.message || e) };
       }
