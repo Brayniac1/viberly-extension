@@ -1434,8 +1434,13 @@
       items = [];
     }
 
-    // Normalize to local shape and return all rows (no category filter)
-    return Array.isArray(items) ? items.map(__toLocalGuard) : [];
+    if (!Array.isArray(items)) return [];
+
+    return items
+      .filter(
+        (row) => String(row?.status || "").toLowerCase() === "active"
+      )
+      .map(__toLocalGuard);
   }
 
   // (Deprecated in DB mode—no-op kept for compatibility)

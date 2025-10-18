@@ -1,0 +1,1472 @@
+// src/content/enhance/prompt-suggestion-ui.js
+// Renders the inline ghost suggestion and handles acceptance / cycling.
+
+import {
+  activateSuggestionCooldown,
+  getComposerState,
+  isSuggestionCooldownActive,
+  resetSuggestionTyping,
+} from "./state.js";
+import {
+  cycleSuggestion,
+  markSuggestionAccepted,
+  markSuggestionDismissed,
+} from "./suggestion-engine.js";
+const OVERLAY_CLASS = "vg-prompt-suggestion";
+const OVERLAY_ID_PREFIX = "__vg_prompt_suggestion__";
+const MIRROR_ID = "__vib_marker_mirror__";
+const HIDE_AFTER_DISMISS_MS = 2000;
+const MAX_INLINE_WORDS = 4;
+const TOOLTIP_DELAY_MS = 150;
+const MARKER_MODAL_CLASS = "vib-marker-modal";
+
+const overlayMap = new WeakMap();
+const tooltipMap = new WeakMap();
+const PROMPT_TOOLTIP_DEBUG =
+  typeof window !== "undefined" && Boolean(window.VG_DEBUG_PROMPT_TOOLTIP);
+
+const SENTENCE_PUNCTUATION_RE = /[.!?;,:]/;
+
+function getCaretOffsetInComposer(composer) {
+  if (!composer) return -1;
+  if ("selectionStart" in composer && typeof composer.selectionStart === "number") {
+    return composer.selectionStart;
+  }
+  try {
+    const doc = composer.ownerDocument || document;
+    const sel = doc.getSelection?.();
+    if (!sel || sel.rangeCount === 0) return -1;
+    const range = sel.getRangeAt(0);
+    if (!composer.contains(range.startContainer)) return -1;
+    const pre = range.cloneRange();
+    pre.selectNodeContents(composer);
+    pre.setEnd(range.startContainer, range.startOffset);
+    return pre.toString().length;
+  } catch {
+    return -1;
+  }
+}
+
+function isCaretAtTextEnd(composer) {
+  const text = getComposerPlainText(composer);
+  const caret = getCaretOffsetInComposer(composer);
+  if (caret < 0) return true;
+  const remaining = text.slice(caret);
+  return normalizeVisibleText(remaining).length === 0;
+}
+
+function getComposerPlainText(composer) {
+  if (!composer) return "";
+  if (typeof composer.value === "string") {
+    return composer.value;
+  }
+  return String(composer.innerText || composer.textContent || "");
+}
+
+function normalizeVisibleText(text = "") {
+  return String(text || "")
+    .replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF]/g, "")
+    .trim();
+}
+
+const TOOLTIP_HIDE_DELAY_MS = 160;
+
+const tooltipState = {
+  active: null,
+  hideTimer: null,
+  pointerDown: false,
+  locks: new Set(),
+  docPointerDownHandler: null,
+  docPointerUpHandler: null,
+  docKeyHandler: null,
+};
+
+let tooltipWheelTimer = null;
+
+function getActiveOverlay() {
+  return tooltipState.active?.overlay || null;
+}
+
+function getActiveTooltipElement() {
+  return tooltipState.active?.tooltip || null;
+}
+
+function getActiveComposer() {
+  return tooltipState.active?.composer || null;
+}
+
+function getActiveDoc() {
+  return tooltipState.active?.doc || null;
+}
+
+function isWithinActiveTooltip(node) {
+  const tooltipEl = getActiveTooltipElement();
+  return !!(tooltipEl && node && (tooltipEl === node || tooltipEl.contains(node)));
+}
+
+function isWithinActiveOverlay(node) {
+  const overlayEl = getActiveOverlay();
+  return !!(overlayEl && node && (overlayEl === node || overlayEl.contains(node)));
+}
+
+function isWithinActiveTarget(node) {
+  return isWithinActiveTooltip(node) || isWithinActiveOverlay(node);
+}
+
+function promptTooltipLog(label, payload) {
+  if (!PROMPT_TOOLTIP_DEBUG) return;
+  try {
+    console.debug(`[VG][prompt-tooltip] ${label}`, payload);
+  } catch {}
+}
+
+// Minimal background messaging helper with retry to wake the service worker.
+async function sendBG(type, payload, timeoutMs = 1500) {
+  function ask() {
+    return new Promise((resolve) => {
+      let complete = false;
+      const timer = setTimeout(() => {
+        if (!complete) resolve("__TIMEOUT__");
+      }, timeoutMs);
+      try {
+        browser.runtime
+          .sendMessage({ type, ...(payload || {}) })
+          .then((resp) => {
+            complete = true;
+            clearTimeout(timer);
+            if (browser.runtime.lastError) {
+              return resolve("__NO_RECEIVER__");
+            }
+            resolve(resp);
+          });
+      } catch {
+        resolve("__NO_RECEIVER__");
+      }
+    });
+  }
+
+  let res = await ask();
+  if (res === "__NO_RECEIVER__" || res === "__TIMEOUT__") {
+    try {
+      const {
+        data: { session },
+      } = await (window.VG?.auth?.getSession?.() ?? {
+        data: { session: null },
+      });
+      if (session?.access_token && session?.refresh_token) {
+        await new Promise((resolve) =>
+          browser.runtime
+            .sendMessage({
+              type: "SET_SESSION",
+              access_token: session.access_token,
+              refresh_token: session.refresh_token,
+            })
+            .then(() => resolve())
+        );
+      }
+    } catch {
+      /* ignore seeding failures; retry regardless */
+    }
+    res = await ask();
+  }
+  return res;
+}
+
+function computeTrimOffset(text = "") {
+  if (!text) return 0;
+  let punctuationIndex = -1;
+  for (let i = text.length - 1; i >= 0; i--) {
+    const ch = text[i];
+    if (SENTENCE_PUNCTUATION_RE.test(ch)) {
+      punctuationIndex = i + 1;
+      break;
+    }
+  }
+  if (punctuationIndex >= 0) return punctuationIndex;
+  const lastNewline = text.lastIndexOf("\n");
+  return lastNewline >= 0 ? lastNewline + 1 : 0;
+}
+
+function ensureGapSuffix(text = "") {
+  if (!text) return "";
+  if (text.endsWith("\n\n")) return text;
+  if (text.endsWith("\n")) return `${text}\n`;
+  return `${text}\n\n`;
+}
+
+function trimPlainTextComposer(composer) {
+  const value = String(composer.value || "");
+  const caret =
+    typeof composer.selectionStart === "number"
+      ? composer.selectionStart
+      : value.length;
+  const before = value.slice(0, caret);
+  const after = value.slice(caret);
+  const keepOffset = computeTrimOffset(before);
+  const baseBefore = before.slice(0, keepOffset).replace(/\s*$/, "");
+  let prefix = baseBefore;
+  if (prefix) {
+    prefix = ensureGapSuffix(prefix);
+  }
+  const remainder = after.replace(/^\s*/, "");
+  const nextValue = prefix + remainder;
+  if (composer.value !== nextValue) {
+    composer.value = nextValue;
+    composer.dispatchEvent(new Event("input", { bubbles: true }));
+    composer.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const caretPos = prefix.length;
+  composer.setSelectionRange?.(caretPos, caretPos);
+  return { trimmed: caretPos > 0, caret: caretPos };
+}
+
+function resolveTextPosition(doc, root, targetOffset) {
+  if (targetOffset <= 0) {
+    return { node: root, offset: 0 };
+  }
+  const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let remaining = targetOffset;
+  let node = walker.nextNode();
+  while (node) {
+    const len = node.nodeValue.length;
+    if (remaining <= len) {
+      return { node, offset: remaining };
+    }
+    remaining -= len;
+    node = walker.nextNode();
+  }
+  return { node: root, offset: root.childNodes.length };
+}
+
+function trimRichTextComposer(composer, doc) {
+  const sel = doc.getSelection?.();
+  if (!sel || !sel.rangeCount) return false;
+  const range = sel.getRangeAt(0);
+  if (!composer.contains(range.startContainer)) return false;
+  const preRange = range.cloneRange();
+  preRange.selectNodeContents(composer);
+  preRange.setEnd(range.startContainer, range.startOffset);
+  const beforeText = preRange.toString();
+  const keepOffset = computeTrimOffset(beforeText);
+  const charsToRemove = beforeText.length - keepOffset;
+  let insertedGap = false;
+  if (charsToRemove > 0) {
+    if (typeof sel.modify === "function") {
+      sel.collapse(range.startContainer, range.startOffset);
+      for (let i = 0; i < charsToRemove; i += 1) {
+        sel.modify("extend", "backward", "character");
+      }
+      doc.execCommand?.("delete", false, "");
+    } else {
+      const deleteRange = range.cloneRange();
+      const startInfo = resolveTextPosition(doc, composer, keepOffset);
+      if (startInfo) {
+        deleteRange.setStart(startInfo.node, startInfo.offset);
+        deleteRange.setEnd(range.startContainer, range.startOffset);
+        deleteRange.deleteContents();
+      }
+    }
+    sel.removeAllRanges();
+    const afterDelete = doc.createRange();
+    afterDelete.selectNodeContents(composer);
+    afterDelete.collapse(false);
+    sel.addRange(afterDelete);
+    insertedGap = keepOffset > 0;
+  } else if (beforeText.length > 0) {
+    insertedGap = true;
+  }
+
+  if (insertedGap) {
+    if (!(doc.execCommand && doc.execCommand("insertText", false, "\n\n"))) {
+      const newlineNode = doc.createTextNode("\n\n");
+      const caretRange = sel.getRangeAt(0);
+      caretRange.insertNode(newlineNode);
+      const after = doc.createRange();
+      after.setStartAfter(newlineNode);
+      after.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(after);
+    } else {
+      sel.collapseToEnd();
+    }
+  }
+
+  composer.dispatchEvent(new Event("input", { bubbles: true }));
+  composer.dispatchEvent(new Event("change", { bubbles: true }));
+  const caretRange = sel.getRangeAt(0);
+  const pre = caretRange.cloneRange();
+  pre.selectNodeContents(composer);
+  pre.setEnd(caretRange.startContainer, caretRange.startOffset);
+  const caretOffset = pre.toString().length;
+  return { trimmed: insertedGap, caret: caretOffset };
+}
+
+function normalizePlainTextForComposer(raw) {
+  const base = String(raw || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\u00a0/g, " ");
+  const tokens = base.split("\n");
+  const out = [];
+  let prevType = null;
+  for (let line of tokens) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (out.length && out[out.length - 1] !== "") {
+        out.push("");
+      }
+      prevType = "blank";
+      continue;
+    }
+    const isHeading =
+      /^[A-Z0-9 .,'"-]+$/.test(trimmed) &&
+      trimmed.split(/\s+/).length <= 6;
+    const isBullet = trimmed.startsWith("•");
+    const normalizedLine = isHeading
+      ? trimmed.toUpperCase()
+      : isBullet
+      ? `• ${trimmed.slice(1).trimStart()}`
+      : trimmed;
+    const type = isBullet ? "bullet" : isHeading ? "heading" : "text";
+    if (
+      out.length &&
+      prevType &&
+      prevType !== "blank" &&
+      type !== prevType &&
+      out[out.length - 1] !== ""
+    ) {
+      out.push("");
+    }
+    out.push(normalizedLine);
+    prevType = type;
+  }
+  const compact = [];
+  for (const line of out) {
+    if (line === "" && compact[compact.length - 1] === "") continue;
+    compact.push(line);
+  }
+  return compact.join("\n").trim();
+}
+
+function clearTooltipHideTimer() {
+  if (tooltipState.hideTimer) {
+    clearTimeout(tooltipState.hideTimer);
+    tooltipState.hideTimer = null;
+  }
+}
+
+function lockTooltip(source) {
+  if (!source) return;
+  tooltipState.locks.add(source);
+  clearTooltipHideTimer();
+}
+
+function hideActiveTooltip() {
+  const active = tooltipState.active;
+  if (!active) return;
+  const { tooltip, doc, composer } = active;
+  clearTooltipHideTimer();
+  tooltipState.active = null;
+  tooltipState.pointerDown = false;
+  tooltipState.locks.clear();
+  if (tooltipWheelTimer) {
+    clearTimeout(tooltipWheelTimer);
+    tooltipWheelTimer = null;
+  }
+  if (tooltip) {
+    tooltip.style.opacity = "0";
+    tooltip.classList.add("hidden");
+    tooltip.style.pointerEvents = "none";
+    tooltip._currentComposer = null;
+  }
+  if (composer) {
+    const data = overlayMap.get(composer);
+    if (data) {
+      clearHideTimer(data);
+      data.lockDepth = 0;
+    }
+  }
+  if (doc) {
+    teardownDocHandlers(doc);
+  }
+}
+
+function hideTooltipForComposer(composer) {
+  const active = tooltipState.active;
+  if (!active) return;
+  if (!composer || active.composer === composer) {
+    hideActiveTooltip();
+  }
+}
+
+function setActiveTooltip(doc, tooltip, overlay, composer) {
+  const prevDoc = getActiveDoc();
+  if (prevDoc && prevDoc !== doc) {
+    teardownDocHandlers(prevDoc);
+  }
+  tooltipState.active = {
+    doc,
+    tooltip,
+    overlay,
+    composer,
+  };
+  tooltipState.pointerDown = false;
+  ensureDocHandlers(doc);
+}
+
+function scheduleTooltipHide() {}
+
+function ensureDocHandlers(doc) {
+  if (!tooltipState.docKeyHandler) {
+    tooltipState.docKeyHandler = (event) => {
+      // escape key no longer closes the modal
+    };
+    doc.addEventListener("keydown", tooltipState.docKeyHandler, true);
+  }
+}
+
+function attachPointerGuards(doc) {
+  const tooltip = getActiveTooltipElement();
+  if (!tooltip) return;
+  if (!tooltipState.docPointerDownHandler) {
+    tooltipState.docPointerDownHandler = (evt) => {
+      // keep modal open regardless of outside clicks
+    };
+    doc.addEventListener("pointerdown", tooltipState.docPointerDownHandler, true);
+  }
+  if (!tooltipState.docPointerUpHandler) {
+    tooltipState.docPointerUpHandler = (evt) => {
+      tooltipState.pointerDown = false;
+      // keep modal locked after pointer up
+      if (tooltipState.docPointerUpHandler) {
+        doc.removeEventListener("pointerup", tooltipState.docPointerUpHandler, true);
+        tooltipState.docPointerUpHandler = null;
+      }
+    };
+    doc.addEventListener("pointerup", tooltipState.docPointerUpHandler, true);
+  }
+}
+
+function teardownDocHandlers(doc) {
+  if (tooltipState.docPointerDownHandler) {
+    doc.removeEventListener("pointerdown", tooltipState.docPointerDownHandler, true);
+    tooltipState.docPointerDownHandler = null;
+  }
+  if (tooltipState.docPointerUpHandler) {
+    doc.removeEventListener("pointerup", tooltipState.docPointerUpHandler, true);
+    tooltipState.docPointerUpHandler = null;
+  }
+  if (tooltipState.docKeyHandler) {
+    doc.removeEventListener("keydown", tooltipState.docKeyHandler, true);
+    tooltipState.docKeyHandler = null;
+  }
+}
+
+function clearHideTimer(data) {
+  if (!data) return;
+  if (data.hideTimer) {
+    clearTimeout(data.hideTimer);
+    data.hideTimer = null;
+  }
+}
+
+function lockTooltipData(data) {
+  if (!data) return;
+  clearHideTimer(data);
+  data.lockDepth = (data.lockDepth || 0) + 1;
+  lockTooltip(data);
+}
+
+function unlockTooltipData(data) {
+  if (!data) return;
+  data.lockDepth = Math.max(0, (data.lockDepth || 1) - 1);
+  if (!data.lockDepth && data.hoverTimer) {
+    clearTimeout(data.hoverTimer);
+    data.hoverTimer = null;
+  }
+}
+
+function truncate(text, max) {
+  const normalized = String(text || "").trim();
+  if (!normalized) return "";
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, max - 1).trim()}…`;
+}
+
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatPreviewText(raw) {
+  return String(raw || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/^[ \t]*#{1,6}\s*/gm, "")
+    .replace(/^[ \t]*[-*]\s+/gm, "• ")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/__(.*?)__/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`{1,3}([^`]+)`{1,3}/g, "$1")
+    .replace(/^\s+$/gm, "")
+    .trimEnd();
+}
+
+
+function ensureTooltipStyles(doc) {
+  if (doc.getElementById("__vg_prompt_tooltip_css")) return;
+  const style = doc.createElement("style");
+  style.id = "__vg_prompt_tooltip_css";
+  style.textContent = `
+    .vg-inline-actions{
+      display:flex;
+      gap:9px;
+      justify-content:flex-end;
+      margin-top: 8px;
+    }
+  `;
+  style.textContent += `
+    .vg-inline-suggestion p {
+      margin: 0;
+    }
+    .vg-inline-suggestion p + p {
+      margin-top: 10px;
+    }
+  `;
+  doc.head.appendChild(style);
+}
+
+function ensureTooltip(doc) {
+  let tooltip = tooltipMap.get(doc);
+  if (tooltip) return tooltip;
+  ensureTooltipStyles(doc);
+  tooltip = doc.createElement("div");
+  tooltip.className = `${MARKER_MODAL_CLASS} vg-inline-suggestion hidden`;
+  tooltip.style.position = "fixed";
+  tooltip.style.opacity = "0";
+  tooltip.style.pointerEvents = "none";
+  tooltip.style.zIndex = "2147483605";
+
+  const headerEl = doc.createElement("div");
+  headerEl.className = `${MARKER_MODAL_CLASS}-header`;
+  const iconEl = doc.createElement("div");
+  iconEl.className = `${MARKER_MODAL_CLASS}-icon`;
+  iconEl.textContent = "✦";
+  const headerText = doc.createElement("div");
+  headerText.textContent = "Suggestion";
+  headerEl.append(iconEl, headerText);
+
+  const metaEl = doc.createElement("div");
+  metaEl.className = `${MARKER_MODAL_CLASS}-meta`;
+  const metaLeft = doc.createElement("span");
+  metaLeft.textContent = "INSERT PROMPT";
+  const metaRight = doc.createElement("span");
+  metaRight.style.fontSize = "9.5px";
+  metaRight.style.color = "rgba(190,195,220,0.65)";
+  metaRight.style.textTransform = "none";
+  metaRight.style.letterSpacing = "0.3px";
+  metaEl.append(metaLeft, metaRight);
+
+  const labelEl = doc.createElement("div");
+  labelEl.className = `${MARKER_MODAL_CLASS}-label`;
+  labelEl.textContent = "";
+
+  const bodyEl = doc.createElement("div");
+  bodyEl.className = `${MARKER_MODAL_CLASS}-body`;
+  bodyEl.style.whiteSpace = "pre-wrap";
+  bodyEl.style.lineHeight = "1.55";
+
+  const footerEl = doc.createElement("div");
+  footerEl.className = `${MARKER_MODAL_CLASS}-actions vg-inline-actions`;
+  footerEl.innerHTML = `
+    <button class="dismiss vg-inline-dismiss">Dismiss</button>
+    <button class="enhance vg-inline-insert">Insert</button>
+  `;
+
+  tooltip.append(headerEl, metaEl, labelEl, bodyEl, footerEl);
+  tooltip._parts = {
+    metaRight,
+    labelEl,
+    bodyEl,
+    footerEl,
+  };
+
+  tooltip.addEventListener("pointerenter", () => {
+    const cmp = tooltip._currentComposer;
+    if (!cmp) return;
+    const data = overlayMap.get(cmp);
+    lockTooltipData(data);
+  });
+
+  tooltip.addEventListener("pointerleave", (event) => {
+    if (tooltipState.pointerDown) return;
+    const cmp = tooltip._currentComposer;
+    if (!cmp) return;
+    const data = overlayMap.get(cmp);
+    if (!data) return;
+    const doc = cmp.ownerDocument || document;
+    const next =
+      event?.relatedTarget ||
+      (event ? doc.elementFromPoint(event.clientX, event.clientY) : null);
+    const activeTooltip = tooltipMap.get(doc);
+    if (next && (activeTooltip?.contains(next) || data.el.contains(next))) {
+      return;
+    }
+  });
+
+  const handlePointerDown = () => {
+    tooltipState.pointerDown = true;
+    lockTooltip(tooltip);
+    if (tooltipWheelTimer) {
+      clearTimeout(tooltipWheelTimer);
+      tooltipWheelTimer = null;
+    }
+    const doc = tooltip.ownerDocument || document;
+    attachPointerGuards(doc);
+  };
+
+  const handleWheel = () => {
+    lockTooltip(tooltip);
+    if (tooltipWheelTimer) {
+      clearTimeout(tooltipWheelTimer);
+      tooltipWheelTimer = null;
+    }
+    tooltipWheelTimer = setTimeout(() => {
+      tooltipWheelTimer = null;
+    }, 1000);
+  };
+
+  tooltip.addEventListener("pointerdown", handlePointerDown);
+  tooltip.addEventListener("wheel", handleWheel, { passive: true });
+
+  doc.body.appendChild(tooltip);
+  tooltipMap.set(doc, tooltip);
+  return tooltip;
+}
+
+function ensureOverlay(composer) {
+  let data = overlayMap.get(composer);
+  if (data) return data;
+
+  const doc = composer.ownerDocument || document;
+  const overlay = doc.createElement("div");
+  overlay.className = OVERLAY_CLASS;
+  overlay.id = `${OVERLAY_ID_PREFIX}${Math.random().toString(16).slice(2)}`;
+  Object.assign(overlay.style, {
+    position: "fixed",
+    pointerEvents: "none",
+    opacity: "0",
+    transition: "opacity 120ms ease",
+    zIndex: "2147483604",
+    color: "rgba(210,215,230,0.7)",
+    fontStyle: "italic",
+    whiteSpace: "pre",
+    maxWidth: "60vw",
+  });
+
+  const textEl = doc.createElement("span");
+  overlay.appendChild(textEl);
+  doc.body.appendChild(overlay);
+
+  const keyHandler = (event) => handleKeyDown(event, composer);
+  composer.addEventListener("keydown", keyHandler, true);
+
+  const handleEnter = () => {
+    lockTooltipData(data);
+    scheduleTooltip(composer, TOOLTIP_DELAY_MS);
+  };
+  const handleLeave = (event) => {
+    if (tooltipState.pointerDown) return;
+    const next =
+      event?.relatedTarget ||
+      (event ? doc.elementFromPoint(event.clientX, event.clientY) : null);
+    const tooltip = tooltipMap.get(doc);
+    if (tooltip && next && tooltip.contains(next)) {
+      return;
+    }
+  };
+  overlay.addEventListener("pointerenter", handleEnter);
+  overlay.addEventListener("mouseenter", handleEnter);
+  overlay.addEventListener("pointerleave", handleLeave);
+  overlay.addEventListener("mouseleave", handleLeave);
+
+  data = {
+    el: overlay,
+    textEl,
+    keyHandler,
+    visible: false,
+    hoverTimer: null,
+    hideTimer: null,
+    composer,
+  };
+  overlayMap.set(composer, data);
+  return data;
+}
+
+function hideOverlay(data, composer) {
+  if (!data || !data.el) return;
+  data.el.style.opacity = "0";
+  data.el.style.pointerEvents = "none";
+  data.visible = false;
+  if (data.hoverTimer) {
+    clearTimeout(data.hoverTimer);
+    data.hoverTimer = null;
+  }
+  clearHideTimer(data);
+  data.lockDepth = 0;
+  data.fullPreview = "";
+  hideTooltipForComposer(composer || data.composer || null);
+}
+
+function applyFontStyles(target, composer) {
+  const cs = composer.ownerDocument?.defaultView?.getComputedStyle(composer);
+  if (!cs) return;
+  target.style.font = cs.font;
+  target.style.fontSize = cs.fontSize;
+  target.style.lineHeight = cs.lineHeight;
+  target.style.letterSpacing = cs.letterSpacing;
+  target.style.color = "rgba(210,215,230,0.72)";
+}
+
+function buildGhostText(state) {
+  const suggestion = state?.suggestion;
+  if (!suggestion || !suggestion.preview) return { inline: "", full: "" };
+  const preview = suggestion.preview;
+  const tail = suggestion.query?.tailText ?? state.intentMatchedText ?? "";
+  const tailLower = (tail || "").toLowerCase();
+  const previewLower = preview.toLowerCase();
+  let overlap = 0;
+  const maxOverlap = Math.min(tailLower.length, previewLower.length);
+  for (let i = maxOverlap; i > 0; i--) {
+    if (tailLower.endsWith(previewLower.slice(0, i))) {
+      overlap = i;
+      break;
+    }
+  }
+  let remainder = preview.slice(overlap).replace(/^\s+/, "");
+  if (!remainder) return { inline: "", full: "" };
+
+  const tailTrimmed = tail.trimEnd();
+  const endsSentence = /[.!?]\s*$/.test(tailTrimmed);
+  if (!endsSentence) {
+    remainder =
+      remainder.charAt(0).toLowerCase() + remainder.slice(1);
+    remainder = ` ${remainder}`;
+  } else if (!tailTrimmed.endsWith(" ") && !remainder.startsWith(" ")) {
+    remainder = ` ${remainder}`;
+  }
+  const trimmedCore = remainder.trim();
+  if (!trimmedCore) {
+    return { inline: remainder, full: remainder };
+  }
+  const words = trimmedCore.split(/\s+/);
+  let inlineCore = trimmedCore;
+  if (words.length > MAX_INLINE_WORDS) {
+    inlineCore = `${words.slice(0, MAX_INLINE_WORDS).join(" ")}…`;
+  }
+  const inline = remainder.startsWith(" ") ? ` ${inlineCore}` : inlineCore;
+  return { inline, full: remainder };
+}
+
+function getContentEditableCaretRect(composer) {
+  const doc = composer.ownerDocument || document;
+  const sel = doc.getSelection && doc.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0).cloneRange();
+  if (!composer.contains(range.startContainer)) return null;
+  range.collapse(false);
+  let rect = range.getClientRects()[0];
+  if (!rect) {
+    const marker = doc.createElement("span");
+    marker.textContent = "\u200b";
+    range.insertNode(marker);
+    rect = marker.getBoundingClientRect();
+    marker.parentNode?.removeChild(marker);
+  }
+  return rect || null;
+}
+
+function ensureMirror(textarea) {
+  const doc = textarea.ownerDocument || document;
+  let mirror = doc.getElementById(MIRROR_ID);
+  if (!mirror) {
+    mirror = doc.createElement("div");
+    mirror.id = MIRROR_ID;
+    Object.assign(mirror.style, {
+      position: "absolute",
+      visibility: "hidden",
+      whiteSpace: "pre-wrap",
+      wordWrap: "break-word",
+      pointerEvents: "none",
+    });
+    doc.body.appendChild(mirror);
+  }
+  const cs = doc.defaultView?.getComputedStyle(textarea);
+  const rect = textarea.getBoundingClientRect();
+  Object.assign(mirror.style, {
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    font: cs?.font || "",
+    lineHeight: cs?.lineHeight || "",
+    padding: cs?.padding || "",
+    border: cs?.border || "",
+    boxSizing: cs?.boxSizing || "border-box",
+  });
+  return mirror;
+}
+
+function encodeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/ /g, "&nbsp;")
+    .replace(/\n/g, "<br>");
+}
+
+function getTextareaCaretRect(textarea) {
+  if (!("selectionEnd" in textarea)) return null;
+  const mirror = ensureMirror(textarea);
+  const value = textarea.value || "";
+  const caret = textarea.selectionEnd ?? value.length;
+  const before = encodeHtml(value.slice(0, caret));
+  const after = encodeHtml(value.slice(caret));
+  mirror.innerHTML = `${before}<span class="vg-caret-marker">\u200b</span>${after}`;
+  mirror.scrollTop = textarea.scrollTop;
+  mirror.scrollLeft = textarea.scrollLeft;
+  const caretEl = mirror.querySelector(".vg-caret-marker");
+  if (!caretEl) return null;
+  const caretRect = caretEl.getBoundingClientRect();
+  return caretRect || null;
+}
+
+function getCaretRect(composer) {
+  if ("selectionEnd" in composer && typeof composer.selectionEnd === "number") {
+    return getTextareaCaretRect(composer);
+  }
+  return getContentEditableCaretRect(composer);
+}
+
+function handleKeyDown(event, composer) {
+  const state = getComposerState(composer);
+  if (!state?.suggestion) return;
+
+  if (
+    event.key === "Tab" &&
+    !event.shiftKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  ) {
+    event.preventDefault();
+    acceptSuggestion(composer, state);
+    return;
+  }
+
+  if (event.key === "Tab" && event.ctrlKey) {
+    event.preventDefault();
+    const direction = event.shiftKey ? -1 : 1;
+    const next = cycleSuggestion(state, direction);
+    if (!next) {
+      state.suggestion = null;
+      state.suggestionCandidates = [];
+      state.suggestionIndex = -1;
+    }
+    requestAnimationFrame(() => updatePromptSuggestionUI(composer));
+    return;
+  }
+
+  if (event.key === "Escape") {
+    event.preventDefault();
+    dismissSuggestion(composer, state);
+  }
+}
+
+function dismissSuggestion(composer, state) {
+  if (!state?.suggestion) return false;
+  activateSuggestionCooldown(state, "dismiss", {
+    text: state.lastRawText || "",
+    caret: typeof state.lastCaret === "number" ? state.lastCaret : -1,
+  });
+  markSuggestionDismissed(state);
+  state.suggestionHiddenUntil = Date.now() + HIDE_AFTER_DISMISS_MS;
+  state.suggestion = null;
+  state.suggestionCandidates = [];
+  state.suggestionIndex = -1;
+  const data = overlayMap.get(composer);
+  hideOverlay(data, composer);
+  return true;
+}
+
+function insertTextFallback(composer, text) {
+  if (!text) return false;
+  if ("value" in composer) {
+    try {
+      composer.focus();
+    } catch {}
+    const start =
+      typeof composer.selectionStart === "number"
+        ? composer.selectionStart
+        : composer.value.length;
+    const end =
+      typeof composer.selectionEnd === "number"
+        ? composer.selectionEnd
+        : start;
+    const before = composer.value.slice(0, start);
+    const after = composer.value.slice(end);
+    const prefix = before && !/\n\n$/.test(before) ? "\n\n" : "";
+    const suffix = after && !after.startsWith("\n") ? "\n\n" : "\n";
+    const next = `${before}${prefix}${text}${suffix}${after}`;
+    composer.value = next;
+    const caret =
+      before.length + prefix.length + text.length + suffix.length;
+    composer.setSelectionRange?.(caret, caret);
+    composer.dispatchEvent(new Event("input", { bubbles: true }));
+    composer.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  const target = composer;
+  const doc = target.ownerDocument || document;
+  const sel = doc.getSelection && doc.getSelection();
+  try {
+    target.focus();
+  } catch {}
+  if (!sel || !sel.rangeCount || !target.contains(sel.anchorNode)) {
+    const range = doc.createRange();
+    range.selectNodeContents(target);
+    range.collapse(false);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }
+  const range = sel.getRangeAt(0);
+  range.deleteContents();
+  const frag = doc.createDocumentFragment();
+  frag.appendChild(doc.createTextNode(text));
+  frag.appendChild(doc.createTextNode("\n\n"));
+  range.insertNode(frag);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+  target.dispatchEvent(new Event("input", { bubbles: true }));
+  target.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
+}
+
+function insertGuardText(composer, guardBody) {
+  if (!guardBody) return false;
+  const doc = composer?.ownerDocument || document;
+  const isPlainText = typeof composer?.value === "string";
+  let caretAfterTrim = -1;
+
+  if (isPlainText) {
+    const trimInfo = trimPlainTextComposer(composer) || {};
+    caretAfterTrim =
+      typeof trimInfo.caret === "number" ? trimInfo.caret : caretAfterTrim;
+    const value = String(composer.value || "");
+    const caretBefore =
+      typeof composer.selectionStart === "number"
+        ? composer.selectionStart
+        : value.length;
+    const before = value.slice(0, caretBefore);
+    const after = value.slice(caretBefore);
+    const nextValue = before + guardBody + after;
+    if (composer.value !== nextValue) {
+      composer.value = nextValue;
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      composer.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    const newCaret = before.length + guardBody.length;
+    composer.setSelectionRange?.(newCaret, newCaret);
+    promptTooltipLog("insertGuardText plain", {
+      caretBefore,
+      caretAfter: newCaret,
+    });
+    return { ok: true, caret: newCaret, plainText: getComposerPlainText(composer) };
+  } else {
+    const { caret } = trimRichTextComposer(composer, doc) || {};
+    caretAfterTrim = typeof caret === "number" ? caret : caretAfterTrim;
+  }
+
+  promptTooltipLog("insertGuardText payload", {
+    preview: guardBody,
+    length: guardBody.length,
+  });
+  if (
+    typeof window !== "undefined" &&
+    typeof window.vgInsertPrompt === "function"
+  ) {
+    try {
+      const ok = window.vgInsertPrompt(guardBody);
+      promptTooltipLog("insertGuardText via vgInsertPrompt", { ok });
+      if (ok) {
+        return { ok: true, caret: caretAfterTrim, plainText: getComposerPlainText(composer) };
+      }
+    } catch {}
+  }
+  if (
+    typeof window !== "undefined" &&
+    typeof window.setComposerGuardAndCaret === "function"
+  ) {
+    try {
+      const ok = window.setComposerGuardAndCaret(guardBody);
+      promptTooltipLog("insertGuardText via setComposerGuardAndCaret", { ok });
+      if (ok) {
+        return { ok: true, caret: caretAfterTrim, plainText: getComposerPlainText(composer) };
+      }
+    } catch {}
+  }
+
+  const sel = doc.getSelection && doc.getSelection();
+  try {
+    if (sel && (!sel.rangeCount || !composer.contains(sel.anchorNode))) {
+      const range = doc.createRange();
+      range.selectNodeContents(composer);
+      range.collapse(false);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  } catch {}
+
+  try {
+    if (typeof doc.execCommand === "function") {
+      const payload = guardBody;
+      const ok = doc.execCommand("insertText", false, payload);
+      promptTooltipLog("insertGuardText via execCommand", { ok });
+      if (ok) {
+        composer.dispatchEvent(new Event("input", { bubbles: true }));
+        return { ok: true, caret: caretAfterTrim, plainText: getComposerPlainText(composer) };
+      }
+    }
+  } catch {}
+
+  try {
+    if (sel && sel.rangeCount) {
+      const range = sel.getRangeAt(0);
+      range.deleteContents();
+      const node = doc.createTextNode(guardBody);
+      range.insertNode(node);
+      const after = doc.createRange();
+      after.setStartAfter(node);
+      after.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(after);
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      composer.dispatchEvent(new Event("change", { bubbles: true }));
+      promptTooltipLog("insertGuardText via range", { ok: true });
+      return { ok: true, caret: caretAfterTrim, plainText: getComposerPlainText(composer) };
+    }
+  } catch {}
+
+  if (isPlainText) {
+    try {
+      const value = String(composer.value || "");
+      const caret =
+        typeof composer.selectionStart === "number"
+          ? composer.selectionStart
+          : value.length;
+      const next =
+        value.slice(0, caret) +
+        guardBody +
+        value.slice(caret);
+      composer.value = next;
+      const newCaret = caret + guardBody.length;
+      composer.setSelectionRange?.(newCaret, newCaret);
+      composer.dispatchEvent(new Event("input", { bubbles: true }));
+      composer.dispatchEvent(new Event("change", { bubbles: true }));
+      promptTooltipLog("insertGuardText plain fallback", { ok: true });
+      return { ok: true, caret: newCaret, plainText: getComposerPlainText(composer) };
+    } catch {}
+  }
+
+  const fallbackOk = insertTextFallback(composer, guardBody);
+  return {
+    ok: fallbackOk,
+    caret: caretAfterTrim,
+    plainText: getComposerPlainText(composer),
+  };
+}
+
+function applyGuardToComposer(composer, guardBody) {
+  if (!guardBody) return false;
+  if (
+    typeof window !== "undefined" &&
+    typeof window.setComposerGuardAndCaret === "function"
+  ) {
+    try {
+      const ok = window.setComposerGuardAndCaret(guardBody);
+      if (ok) return true;
+    } catch {}
+  }
+  return insertTextFallback(composer, guardBody);
+}
+
+function acceptSuggestion(composer, state) {
+  promptTooltipLog("acceptSuggestion invoked", {
+    hasState: Boolean(state),
+    hasSuggestion: Boolean(state?.suggestion),
+    guardBody: state?.suggestion?.guard?.body,
+  });
+  const guard = state?.suggestion?.guard;
+  if (!guard) return false;
+  const overlayData = overlayMap.get(composer);
+  const guardBody =
+    overlayData?.formattedGuardText ||
+    guard.body ||
+    "";
+
+  try {
+    composer.focus?.();
+  } catch {}
+  const result = insertGuardText(composer, guardBody);
+  if (!result?.ok) {
+    return false;
+  }
+
+  markSuggestionAccepted(state);
+  resetSuggestionTyping(state);
+  state.suggestionHistory.push({
+    id: guard.id,
+    acceptedAt: Date.now(),
+  });
+  state.suggestionHiddenUntil = Date.now() + HIDE_AFTER_DISMISS_MS;
+  state.suggestion = null;
+  state.suggestionCandidates = [];
+  state.suggestionIndex = -1;
+
+  const data = overlayMap.get(composer);
+  hideOverlay(data, composer);
+
+  const plainSnapshot = result?.plainText || getComposerPlainText(composer);
+  const caretAfterInsert =
+    typeof result?.caret === "number"
+      ? result.caret
+      : (() => {
+          try {
+            if (typeof composer.selectionStart === "number") {
+              return composer.selectionStart;
+            }
+            const doc = composer.ownerDocument || document;
+            const sel = doc.getSelection?.();
+            if (sel && sel.rangeCount) {
+              const range = sel.getRangeAt(0);
+              if (composer.contains(range.startContainer)) {
+                const pre = range.cloneRange();
+                pre.selectNodeContents(composer);
+                pre.setEnd(range.startContainer, range.startOffset);
+                return pre.toString().length;
+              }
+            }
+          } catch {}
+          return -1;
+        })();
+  activateSuggestionCooldown(state, "accepted", {
+    text: plainSnapshot,
+    caret: caretAfterInsert,
+  });
+  return true;
+}
+
+export function ensurePromptSuggestionUI(composer) {
+  ensureOverlay(composer);
+}
+
+export function updatePromptSuggestionUI(composer) {
+  const state = getComposerState(composer);
+  const data = ensureOverlay(composer);
+  const suggestion = state?.suggestion;
+
+  if (isSuggestionCooldownActive(state)) {
+    hideOverlay(data, composer);
+    return;
+  }
+
+  if (
+    !suggestion ||
+    (state.suggestionHiddenUntil &&
+      Date.now() < state.suggestionHiddenUntil)
+  ) {
+    hideOverlay(data, composer);
+    return;
+  }
+
+  if (
+    composer.ownerDocument?.activeElement !== composer &&
+    !composer.contains(
+      composer.ownerDocument?.activeElement || null
+    )
+  ) {
+    hideOverlay(data, composer);
+    return;
+  }
+
+  const plainTextSnapshot = getComposerPlainText(composer);
+  if (!plainTextSnapshot.trim().length) {
+    const state = getComposerState(composer);
+    if (state) {
+      state.suggestion = null;
+      state.suggestionCandidates = [];
+      state.suggestionIndex = -1;
+      state.suggestionEvalToken = 0;
+      state.suggestionHiddenUntil = Date.now() + 300;
+    }
+    hideOverlay(data, composer);
+    return;
+  }
+
+  const ghost = buildGhostText(state);
+  if (!ghost.inline) {
+    hideOverlay(data, composer);
+    return;
+  }
+
+  if (!isCaretAtTextEnd(composer)) {
+    hideOverlay(data, composer);
+    return;
+  }
+
+  const caretRect = getCaretRect(composer);
+  if (!caretRect) {
+    hideOverlay(data, composer);
+    return;
+  }
+
+  const composerRect = composer.getBoundingClientRect();
+  const availableWidth = composerRect.right - caretRect.right - 6;
+  if (availableWidth <= 12) {
+    hideOverlay(data, composer);
+    return;
+  }
+
+  applyFontStyles(data.el, composer);
+  data.textEl.textContent = ghost.inline;
+  data.el.style.maxWidth = `${availableWidth}px`;
+  const left = Math.min(caretRect.right + 2, composerRect.right - 4);
+  const top = Math.min(
+    caretRect.top,
+    composerRect.bottom - (caretRect.height || 16)
+  );
+  data.el.style.left = `${left}px`;
+  data.el.style.top = `${top}px`;
+  data.el.style.opacity = "1";
+  data.el.style.pointerEvents = "auto";
+  data.visible = true;
+  data.fullPreview = ghost.full;
+  data.title = suggestion.guard?.title || "Suggested prompt";
+  data.guardBody = suggestion.guard?.body || "";
+
+  if (data.el.matches(":hover")) {
+    scheduleTooltip(composer, 0);
+  }
+}
+
+export function clearPromptSuggestionUI(composer) {
+  const data = overlayMap.get(composer);
+  hideOverlay(data, composer);
+}
+
+function scheduleTooltip(composer, delay) {
+  const state = getComposerState(composer);
+  const data = overlayMap.get(composer);
+  if (!state?.suggestion || !data?.visible) return;
+  if (data.hoverTimer) {
+    clearTimeout(data.hoverTimer);
+  }
+  data.hoverTimer = setTimeout(() => {
+    data.hoverTimer = null;
+    showSuggestionTooltip(composer);
+  }, delay);
+}
+
+function showSuggestionTooltip(composer) {
+  promptTooltipLog("showSuggestionTooltip invoked", {
+    composerPresent: Boolean(composer),
+  });
+  const state = getComposerState(composer);
+  const data = overlayMap.get(composer);
+  promptTooltipLog("tooltip prerequisites", {
+    suggestionPresent: Boolean(state?.suggestion),
+    overlayVisible: Boolean(data?.visible),
+    hoverTimerActive: Boolean(data?.hoverTimer),
+  });
+  if (!state?.suggestion || !data?.visible) return;
+
+  const doc = composer.ownerDocument || document;
+  const tooltip = ensureTooltip(doc);
+  const guard = state.suggestion.guard || {};
+  const title = guard.title || data.title || "Suggested prompt";
+  const preview = guard.preview || data.fullPreview || "";
+  const guardBody = guard.body || data.guardBody || "";
+
+  const parts = tooltip._parts || {};
+  if (parts.metaRight) parts.metaRight.textContent = "Press Tab to insert • Ctrl+Tab to cycle";
+  if (parts.labelEl) parts.labelEl.textContent = truncate(title || "Suggested Prompt", 64);
+  if (parts.bodyEl) {
+    const formatted = formatPreviewText(guardBody || preview);
+    const blocks = formatted
+      .replace(/\r\n/g, "\n")
+      .split(/\n\s*\n/)
+      .filter(Boolean)
+      .map((block) =>
+        `<p>${escapeHtml(block).replace(/\n/g, "<br>")}</p>`
+      )
+      .join("");
+    parts.bodyEl.innerHTML = blocks || `<p>${escapeHtml(formatted)}</p>`;
+    data.formattedGuardText = normalizePlainTextForComposer(formatted);
+  }
+  if (parts.footerEl) {
+    const dismissBtn = parts.footerEl.querySelector(".vg-inline-dismiss");
+    const insertBtn = parts.footerEl.querySelector(".vg-inline-insert");
+    const suggestionId = state?.suggestion?.guard?.id || null;
+    promptTooltipLog("footer wiring", {
+      hasDismissBtn: Boolean(dismissBtn),
+      hasInsertBtn: Boolean(insertBtn),
+      suggestionId,
+    });
+    if (dismissBtn) {
+      dismissBtn.onclick = (evt) => {
+        evt.stopPropagation();
+        evt.preventDefault();
+        promptTooltipLog("dismiss click", {
+          guardId: suggestionId,
+        });
+        const liveState = getComposerState(composer);
+        const targetState =
+          liveState?.suggestion?.guard?.id === suggestionId ? liveState : state;
+        dismissSuggestion(composer, targetState || liveState || state);
+      };
+    }
+    if (insertBtn) {
+      insertBtn.onclick = null;
+      insertBtn.onpointerdown = async (evt) => {
+        evt.stopPropagation();
+        evt.preventDefault();
+        const dataRef = overlayMap.get(composer);
+        promptTooltipLog("insert pointerdown", {
+          guardId: suggestionId,
+          hasData: Boolean(dataRef),
+          stateHasSuggestion: Boolean(state?.suggestion),
+        });
+        const body =
+          dataRef?.formattedGuardText ||
+          state?.suggestion?.guard?.body ||
+          dataRef?.guardBody ||
+          guardBody ||
+          "";
+        if (!body) {
+          promptTooltipLog("insert abort:empty guard", {});
+          return;
+        }
+        const guardId = suggestionId ? String(suggestionId) : null;
+        if (guardId) {
+          try {
+            const gate = await sendBG("VG_CAN_INSERT_CUSTOM", {
+              guard_id: guardId,
+            });
+            if (
+              gate &&
+              gate.ok === false &&
+              gate.reason === "CUSTOM_GUARD_LIMIT"
+            ) {
+              promptTooltipLog("insert gate blocked", { guardId, gate });
+              return;
+            }
+            if (gate && gate.ok === false && gate.error) {
+              promptTooltipLog("insert gate error response", {
+                guardId,
+                gate,
+              });
+              return;
+            }
+          } catch (err) {
+            promptTooltipLog("insert gate exception", {
+              guardId,
+              error: err?.message || err,
+            });
+            return;
+          }
+        }
+        try {
+          composer.focus?.();
+        } catch {}
+        const result = insertGuardText(composer, body);
+        const applied = Boolean(result?.ok);
+        promptTooltipLog("applyGuard result", {
+          applied,
+          bodyLength: body.length,
+        });
+        if (!applied) return false;
+        const liveState = getComposerState(composer);
+        const targetState =
+          liveState?.suggestion?.guard?.id === suggestionId ? liveState : state;
+        if (targetState?.suggestion) {
+          markSuggestionAccepted(targetState);
+          resetSuggestionTyping(targetState);
+          targetState.suggestionHistory.push({
+            id: targetState.suggestion.guard?.id || suggestionId || "inline",
+            acceptedAt: Date.now(),
+          });
+          targetState.suggestionHiddenUntil =
+            Date.now() + HIDE_AFTER_DISMISS_MS;
+          targetState.suggestion = null;
+          targetState.suggestionCandidates = [];
+          targetState.suggestionIndex = -1;
+        }
+        if (targetState) {
+          const plain = result?.plainText || getComposerPlainText(composer);
+          const caretPos = typeof result?.caret === "number" ? result.caret : -1;
+          activateSuggestionCooldown(targetState, "accepted", {
+            text: plain,
+            caret: caretPos,
+          });
+        }
+        if (guardId) {
+          (async () => {
+            try {
+              const resp = await sendBG("VG_LOG_GUARD_USE", {
+                guard_id: guardId,
+              });
+              promptTooltipLog("insert log result", {
+                guardId,
+                ok: !!(resp && resp.ok),
+                resp,
+              });
+            } catch (err) {
+              promptTooltipLog("insert log exception", {
+                guardId,
+                error: err?.message || err,
+              });
+            }
+          })();
+        }
+        return false;
+      };
+    }
+  }
+
+  const overlayRect = data.el.getBoundingClientRect();
+  const padding = 12;
+  tooltip.style.opacity = "1";
+  tooltip.classList.remove("hidden");
+  tooltip.style.pointerEvents = "auto";
+  
+  let left = overlayRect.left;
+  let top = overlayRect.bottom + 8;
+  const tooltipRect = tooltip.getBoundingClientRect();
+  if (left + tooltipRect.width + padding > window.innerWidth) {
+    left = Math.max(padding, window.innerWidth - tooltipRect.width - padding);
+  }
+  if (top + tooltipRect.height + padding > window.innerHeight) {
+    top = overlayRect.top - tooltipRect.height - 8;
+  }
+  if (top < padding) top = padding;
+
+  tooltip.style.left = `${left}px`;
+  tooltip.style.top = `${top}px`;
+
+  tooltip._currentComposer = composer;
+  setActiveTooltip(doc, tooltip, data.el, composer);
+}

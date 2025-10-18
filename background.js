@@ -16,7 +16,7 @@ function dbgDebug(...args) {
 }
 
 // ---- Viberly logger (quiet by default; runtime toggle via browser.storage.local.VG_LOG_LEVEL) ----
-let VG_LOG_LEVEL = "error"; // 'silent' | 'error' | 'warn' | 'info' | 'debug'
+let VG_LOG_LEVEL = "info"; // 'silent' | 'error' | 'warn' | 'info' | 'debug'
 try {
   browser.storage.local.get("VG_LOG_LEVEL", (o) => {
     if (typeof o?.VG_LOG_LEVEL === "string") VG_LOG_LEVEL = o.VG_LOG_LEVEL;
@@ -53,6 +53,95 @@ const VG_SUPABASE_URL = "https://auudkltdkakpnmpmddaj.supabase.co";
 const VG_SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1dWRrbHRka2FrcG5tcG1kZGFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU3MDA3NTYsImV4cCI6MjA3MTI3Njc1Nn0.ukDpH6EXksctzWHMSdakhNaWbgFZ61UqrpvzwTy03ho";
 // -----------------
+
+function estimateTokenCount(text) {
+  const clean = String(text || "").trim();
+  if (!clean) return 0;
+  const words = clean.split(/\s+/).filter(Boolean).length;
+  const chars = clean.length;
+  const approx = Math.max(words, Math.round(chars / 4));
+  return approx > 0 ? approx : 0;
+}
+
+function normalizeSourceHost(input) {
+  if (!input) return null;
+  try {
+    const lower = String(input).trim().toLowerCase();
+    if (!lower) return null;
+    if (/^https?:\/\//.test(lower)) {
+      return new URL(lower).hostname.replace(/^www\./, "");
+    }
+    return lower.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+const RESPONSE_EXCERPT_MAX = 1500;
+
+function sanitizeResponseExcerpt(text) {
+  return String(text || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function truncateResponseExcerpt(text) {
+  if (text.length <= RESPONSE_EXCERPT_MAX) return text;
+  return `${text.slice(0, RESPONSE_EXCERPT_MAX - 1).trimEnd()}…`;
+}
+
+function hashString(str) {
+  const value = String(str || "");
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = (hash * 16777619) >>> 0;
+  }
+  return hash.toString(16);
+}
+
+function normalizeTaskLabel(label) {
+  return String(label || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeForSimilarity(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(text) {
+  return normalizeForSimilarity(text)
+    .split(" ")
+    .filter(Boolean);
+}
+
+function jaccardSimilarity(aTokens, bTokens) {
+  if (!aTokens.length || !bTokens.length) return 0;
+  const aSet = new Set(aTokens);
+  const bSet = new Set(bTokens);
+  let intersection = 0;
+  for (const token of aSet) {
+    if (bSet.has(token)) intersection += 1;
+  }
+  const union = new Set([...aSet, ...bSet]).size;
+  return union ? intersection / union : 0;
+}
+
+function promptSimilarity(aTitle, aBody, bTitle, bBody) {
+  const aTokens = tokenize(`${aTitle || ""} ${aBody || ""}`);
+  const bTokens = tokenize(`${bTitle || ""} ${bBody || ""}`);
+  return jaccardSimilarity(aTokens, bTokens);
+}
 
 // ===== Only talk to tabs where Viberly actually runs (mirror content_scripts.matches) =====
 const VG_ALLOWED_URLS = [
@@ -136,6 +225,97 @@ const client = supabase.createClient(VG_SUPABASE_URL, VG_SUPABASE_ANON_KEY, {
   global: { fetch },
 });
 
+// ---- Admin controls (remote-config style knobs) ----
+const ADMIN_CONTROL_DEFAULTS = {
+  intent_window_batch_threshold: 3,
+  auto_generated_guard_activation_version: 3,
+};
+
+const ADMIN_CONTROLS_REFRESH_MS = 5 * 60 * 1000;
+
+const adminControlsState = {
+  values: { ...ADMIN_CONTROL_DEFAULTS },
+  loadedAt: 0,
+  pending: null,
+};
+
+function normalizeAdminControlNumber(key, value) {
+  const fallback = ADMIN_CONTROL_DEFAULTS[key];
+  const parsed =
+    typeof value === "number"
+      ? value
+      : value != null
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  const min = key === "intent_window_batch_threshold" ? 1 : 0;
+  const coerced = Math.max(min, Math.round(parsed));
+  return Number.isFinite(coerced) ? coerced : fallback;
+}
+
+async function refreshAdminControls(force = false) {
+  const now = Date.now();
+  if (!force && adminControlsState.pending) {
+    try {
+      await adminControlsState.pending;
+    } catch {
+      return adminControlsState.values;
+    }
+    return adminControlsState.values;
+  }
+  if (!force && now - adminControlsState.loadedAt < ADMIN_CONTROLS_REFRESH_MS) {
+    return adminControlsState.values;
+  }
+  const task = (async () => {
+    try {
+      const { data, error } = await client
+        .from("admin-controls")
+        .select("key,value");
+      if (error) {
+        vgWarn?.("[VG][admin-controls] fetch failed", error);
+        return adminControlsState.values;
+      }
+      if (Array.isArray(data)) {
+        for (const row of data) {
+          const key = row?.key;
+          if (!(key in ADMIN_CONTROL_DEFAULTS)) continue;
+          adminControlsState.values[key] = normalizeAdminControlNumber(
+            key,
+            row?.value
+          );
+        }
+        adminControlsState.loadedAt = Date.now();
+      }
+    } catch (err) {
+      vgWarn?.("[VG][admin-controls] fetch exception", err);
+    } finally {
+      adminControlsState.pending = null;
+    }
+    return adminControlsState.values;
+  })();
+  adminControlsState.pending = task;
+  return task
+    .catch(() => adminControlsState.values)
+    .then(() => adminControlsState.values);
+}
+
+function getAdminControlValue(key) {
+  if (!(key in ADMIN_CONTROL_DEFAULTS)) {
+    return undefined;
+  }
+  const now = Date.now();
+  if (now - adminControlsState.loadedAt > ADMIN_CONTROLS_REFRESH_MS) {
+    refreshAdminControls().catch(() => {});
+  }
+  const value = adminControlsState.values[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return ADMIN_CONTROL_DEFAULTS[key];
+}
+
+refreshAdminControls(true).catch(() => {});
+
 // ---------- Access Gate v1 (Teams) ----------
 // Source of truth: vg_profiles.team_id → teams.subscription_status
 // Allow: 'active', 'trialing'  |  Block: 'trial_expired','past_due','canceled','expired'
@@ -179,6 +359,8 @@ const __VG_ALLOWED_WHEN_BLOCKED = new Set([
   "COUNTER_HANDSHAKE", // allow handshake while gated
   "USAGE_TEST_INGEST", // one-shot ingest probe while gated
   "VG_USAGE_BATCH", // ✅ allow batched usage events from page
+  "VG_INTENT_CAPTURE",
+  "VG_INTENT_RESPONSE_CAPTURE",
 ]);
 
 async function __vgGateIfBlocked(type, sender) {
@@ -720,7 +902,7 @@ async function __vgFetchTeamPromptsFresh() {
 
   // 4) team prompts (vg_guards)
   const sel =
-    "id, title, body, tags, status, updated_at, created_at, team_id, ownership_type";
+    "id, title, preview, body, tags, status, updated_at, created_at, team_id, ownership_type";
   const { data, error } = await client
     .from("vg_guards")
     .select(sel)
@@ -738,6 +920,7 @@ async function __vgFetchTeamPromptsFresh() {
   return (data || []).map((r) => ({
     id: r.id,
     name: r.title || "Team Prompt",
+    preview: typeof r.preview === "string" ? r.preview : null,
     body: r.body || "",
     tags: Array.isArray(r.tags) ? r.tags : [],
     status: r.status || "active",
@@ -1389,7 +1572,717 @@ async function handleMessage(msg, _host = "", sender = null) {
   if (gate) return gate;
 
   switch (msg?.type) {
-    // ===== COUNTER · Phase 1 Handshake (whitelist check only) =====
+    case "VG_INTENT_CAPTURE": {
+      try {
+        const payload = msg?.payload || {};
+        const rawText = String(payload?.rawText || payload?.trimmedText || "").trim();
+        const segments = Array.isArray(payload?.intentSegments)
+          ? payload.intentSegments.filter(
+              (seg) =>
+                seg &&
+                typeof seg.text === "string" &&
+                seg.text.trim().length > 0
+            )
+          : [];
+        if (!rawText) {
+          return { ok: true, skipped: "NO_TEXT" };
+        }
+        if (!segments.length) {
+          return { ok: true, skipped: "NO_SEGMENTS" };
+        }
+
+        const {
+          data: { session },
+        } = await client.auth.getSession();
+        const userId = session?.user?.id;
+        if (!userId) {
+          vgInfo?.("[VG][intent] capture skipped (no session)");
+          return { ok: false, error: "NO_SESSION" };
+        }
+
+        const sourceUrl =
+          normalizeSourceHost(payload?.sourceUrl) ||
+          normalizeSourceHost(_host) ||
+          null;
+        const tokenCount =
+          typeof payload?.tokenCount === "number" && payload.tokenCount >= 0
+            ? Math.round(payload.tokenCount)
+            : estimateTokenCount(rawText);
+
+        const insertRow = {
+          user_id: userId,
+          conversation_id:
+            typeof payload?.conversationId === "string"
+              ? payload.conversationId
+              : null,
+          source_url: sourceUrl,
+          captured_at: payload?.capturedAt
+            ? new Date(payload.capturedAt).toISOString()
+            : new Date().toISOString(),
+          raw_text: rawText,
+          intent_segments: segments,
+          token_count: tokenCount,
+          is_rich_text: !!payload?.isRichText,
+          params:
+            typeof payload?.params === "object" && payload.params
+              ? payload.params
+              : null,
+        };
+
+        const { data, error } = await client
+          .from("intent_messages")
+          .insert(insertRow)
+          .select("intent_message_id,user_id,source_url,captured_at")
+          .single();
+
+        if (error) {
+          vgWarn("[VG][intent] capture insert failed:", error);
+          return { ok: false, error: error.message || String(error) };
+        }
+
+        const insertedId = data?.intent_message_id || null;
+        const capturedIso = data?.captured_at || new Date().toISOString();
+        const capturedTs = Date.parse(capturedIso);
+
+        const rawThreshold = getAdminControlValue(
+          "intent_window_batch_threshold"
+        );
+        const batchThreshold = Math.max(
+          1,
+          Number.isFinite(rawThreshold)
+            ? rawThreshold
+            : ADMIN_CONTROL_DEFAULTS.intent_window_batch_threshold
+        );
+
+        const counterKey = `${userId}`;
+        const counter = updateIntentBatchCounter(
+          counterKey,
+          {
+            intent_message_id: insertedId,
+            captured_at: capturedIso,
+            source_url: sourceUrl,
+          },
+          batchThreshold
+        );
+        const { count, messages } = counter;
+
+        const logPayload = {
+          id: insertedId,
+          host: sourceUrl,
+          tokens: tokenCount,
+          count,
+          threshold: batchThreshold,
+        };
+
+        let batchReady = false;
+        if (count >= batchThreshold) {
+          batchReady = true;
+          vgInfo?.("[VG][intent] batch ready", logPayload);
+          const windowMessages = Array.isArray(messages)
+            ? messages.slice(-batchThreshold)
+            : [];
+          const messageIds = windowMessages
+            .map((m) => m?.intent_message_id)
+            .filter(Boolean);
+          const sourceHosts = Array.from(
+            new Set(
+              windowMessages
+                .map((m) => m?.source_url)
+                .filter((host) => typeof host === "string" && host.length)
+            )
+          );
+          const windowStartIso =
+            windowMessages[0]?.captured_at || insertRow.captured_at;
+          const windowEndIso =
+            windowMessages[windowMessages.length - 1]?.captured_at ||
+            insertRow.captured_at;
+          try {
+            const { data: windowInsert, error: windowInsertError } =
+              await client
+                .from("intent_windows")
+                .insert({
+                  user_id: userId,
+                  source_url: sourceUrl,
+                  source_hosts: sourceHosts.length ? sourceHosts : null,
+                  message_ids: messageIds,
+                  started_at: windowStartIso,
+                  ended_at: windowEndIso,
+                  message_count: messageIds.length,
+                  custom_prompt_created: false,
+                  custom_prompt_error: null,
+                })
+                .select("window_id")
+                .single();
+
+            if (windowInsertError) {
+              throw windowInsertError;
+            }
+
+            const { data: messageRows, error: messageErr } = await client
+              .from("intent_messages")
+              .select(
+                "intent_message_id,captured_at,source_url,raw_text,intent_segments,token_count,is_rich_text,response_excerpt,response_excerpt_hash,response_captured_at,response_source"
+              )
+              .in("intent_message_id", messageIds)
+              .order("captured_at", { ascending: true });
+
+            if (messageErr) {
+              vgWarn("[VG][intent] fetch messages failed", messageErr);
+            } else {
+              const { data: profileRow } = await client
+                .from("intent_profiles")
+                .select("profile_version,profile,persona,confidence")
+                .eq("user_id", userId)
+                .maybeSingle();
+
+              const recentOutputs = Array.isArray(messageRows)
+                ? (() => {
+                    const sorted = [...messageRows].sort((a, b) => {
+                      const left = Date.parse(
+                        a?.response_captured_at || a?.captured_at || 0
+                      );
+                      const right = Date.parse(
+                        b?.response_captured_at || b?.captured_at || 0
+                      );
+                      return right - left;
+                    });
+                    const seen = new Set();
+                    const out = [];
+                    for (const row of sorted) {
+                      const rawExcerpt = sanitizeResponseExcerpt(
+                        row?.response_excerpt || ""
+                      );
+                      if (!rawExcerpt) continue;
+                      const excerpt = truncateResponseExcerpt(rawExcerpt);
+                      const hash =
+                        row?.response_excerpt_hash || hashString(excerpt);
+                      if (hash && seen.has(hash)) continue;
+                      if (hash) seen.add(hash);
+                      const host =
+                        typeof row?.response_source === "string" &&
+                        row.response_source
+                          ? row.response_source.toLowerCase()
+                          : typeof row?.source_url === "string" &&
+                            row.source_url
+                          ? row.source_url.toLowerCase()
+                          : null;
+                      out.push({
+                        host,
+                        excerpt,
+                        captured_at:
+                          row?.response_captured_at || row?.captured_at || null,
+                      });
+                      if (out.length >= 3) break;
+                    }
+                    return out;
+                  })()
+                : [];
+
+              const invokePayload = {
+                window: {
+                  window_id: windowInsert?.window_id || null,
+                  user_id: userId,
+                  source_hosts: sourceHosts.length ? sourceHosts : null,
+                  started_at: windowStartIso,
+                  ended_at: windowEndIso,
+                  message_ids: messageIds,
+                },
+                messages: messageRows ?? [],
+                profile_snapshot: profileRow?.profile ?? null,
+              };
+
+              try {
+                const { data: insightsData, error: insightsErr } =
+                  await client.functions.invoke("intent-insights", {
+                    body: invokePayload,
+                  });
+                if (insightsErr) {
+                  vgWarn("[VG][intent] insights invoke failed", insightsErr);
+                } else {
+                  vgInfo?.("[VG][intent] insights", insightsData);
+
+                  try {
+                    await client
+                      .from("intent_windows")
+                      .update({
+                        repetition_snapshot:
+                          insightsData?.intent_repetition ?? [],
+                      })
+                      .eq("window_id", windowInsert?.window_id || null);
+                  } catch (snapshotErr) {
+                    vgWarn(
+                      "[VG][intent] repetition snapshot update failed",
+                      snapshotErr
+                    );
+                  }
+
+                  const repetitions = Array.isArray(
+                    insightsData?.intent_repetition
+                  )
+                    ? insightsData.intent_repetition.filter(
+                        (entry) => entry?.threshold_met === true
+                      )
+                    : [];
+
+                  if (repetitions.length) {
+                    for (const entry of repetitions) {
+                      try {
+                        if (!entry?.task_label) continue;
+
+                        const normalizedTaskKey = normalizeTaskLabel(
+                          entry.task_label
+                        );
+                        const promptPayload = {
+                          user_id: userId,
+                          window_id: windowInsert?.window_id || null,
+                          task_label: entry.task_label,
+                          total_recent_count: entry?.total_recent_count ?? null,
+                          count_in_window: entry?.count_in_window ?? null,
+                          persona:
+                            insightsData?.profile?.persona &&
+                            typeof insightsData.profile.persona === "string"
+                              ? insightsData.profile.persona
+                              : null,
+                          examples:
+                            Array.isArray(entry?.examples) &&
+                            entry.examples.length
+                              ? entry.examples
+                              : [],
+                          messages: Array.isArray(messageRows)
+                            ? messageRows
+                            : [],
+                          recent_outputs: recentOutputs,
+                        };
+
+                        const {
+                          data: promptResult,
+                          error: promptError,
+                        } = await client.functions.invoke(
+                          "intent-prompt-builder",
+                          { body: promptPayload }
+                        );
+
+                        if (promptError) {
+                          vgWarn(
+                            "[VG][intent] prompt builder failed",
+                            promptError
+                          );
+                          await client
+                            .from("intent_windows")
+                            .update({
+                              custom_prompt_error:
+                                promptError?.message || String(promptError),
+                            })
+                            .eq("window_id", windowInsert?.window_id || null);
+                          continue;
+                        }
+
+                        if (
+                          !promptResult?.title ||
+                          !promptResult?.body ||
+                          !promptResult?.preview
+                        ) {
+                          vgWarn(
+                            "[VG][intent] prompt builder returned empty prompt/preview",
+                            promptResult
+                          );
+                          await client
+                            .from("intent_windows")
+                            .update({
+                              custom_prompt_error:
+                                "prompt builder returned empty content or preview",
+                            })
+                            .eq("window_id", windowInsert?.window_id || null);
+                          continue;
+                        }
+
+                        const newTitle = String(promptResult.title).trim();
+                        const newBody = String(promptResult.body).trim();
+                        const newPreviewRaw =
+                          typeof promptResult.preview === "string"
+                            ? promptResult.preview.trim()
+                            : "";
+                        const newPreview = (() => {
+                          if (newPreviewRaw.length <= 100) return newPreviewRaw;
+                          const truncated = newPreviewRaw.slice(0, 100);
+                          const lastSpace = truncated.lastIndexOf(" ");
+                          const candidate =
+                            lastSpace > 60
+                              ? truncated.slice(0, lastSpace)
+                              : truncated;
+                          return `${candidate.replace(/\s+$/, "")}...`;
+                        })();
+                        const newTags = Array.isArray(promptResult.tags)
+                          ? promptResult.tags
+                              .map((tag) => String(tag ?? "").trim())
+                              .filter(Boolean)
+                          : [];
+                        const newVariables = Array.isArray(
+                          promptResult.variables
+                        )
+                          ? promptResult.variables
+                          : [];
+                        const newSiteCategory =
+                          String(promptResult.site_category ?? "general").trim() ||
+                          "general";
+                          const baseConfig =
+                            typeof promptResult.config === "object" &&
+                            promptResult.config
+                              ? promptResult.config
+                              : {};
+                          const mergedConfigBase = {
+                            ...baseConfig,
+                            origin_window_id: windowInsert?.window_id || null,
+                            intent_task_label: entry.task_label,
+                            intent_task_key: normalizedTaskKey,
+                          };
+
+                          let reusedGuardId = null;
+
+                          try {
+                            const selectCols =
+                              "id,title,preview,body,config,status,auto_generated_version,user_modified_at";
+                            const applyBaseFilters = (q) =>
+                              q
+                                .eq("user_id", userId)
+                                .eq("auto_generated", true)
+                                .is("user_modified_at", null)
+                                .eq("ownership_type", "personal")
+                                .eq("visibility", "private");
+
+                            let existingGuards = [];
+                            let existingErr = null;
+
+                            const primary = await applyBaseFilters(
+                              client
+                                .from("vg_guards")
+                                .select(selectCols)
+                                .contains("config", {
+                                  intent_task_key: normalizedTaskKey,
+                                })
+                            );
+
+                            if (primary?.error) {
+                              existingErr = primary.error;
+                            } else if (
+                              Array.isArray(primary?.data) &&
+                              primary.data.length
+                            ) {
+                              existingGuards = primary.data;
+                            } else {
+                              const secondary = await applyBaseFilters(
+                                client
+                                  .from("vg_guards")
+                                  .select(selectCols)
+                                  .contains("config", {
+                                    intent_task_label: entry.task_label,
+                                  })
+                              );
+                              if (secondary?.error) {
+                                existingErr = secondary.error;
+                              } else if (
+                                Array.isArray(secondary?.data) &&
+                                secondary.data.length
+                              ) {
+                                existingGuards = secondary.data;
+                              } else {
+                                const fallback = await applyBaseFilters(
+                                  client
+                                    .from("vg_guards")
+                                    .select(selectCols)
+                                    .order("updated_at", {
+                                      ascending: false,
+                                    })
+                                    .limit(25)
+                                );
+                                if (fallback?.error) {
+                                  existingErr = fallback.error;
+                                } else if (Array.isArray(fallback?.data)) {
+                                  existingGuards = fallback.data;
+                                  existingErr = null;
+                                }
+                              }
+                            }
+
+                          if (existingErr) {
+                            vgWarn(
+                              "[VG][intent] guard lookup failed",
+                              existingErr
+                            );
+                          } else if (Array.isArray(existingGuards)) {
+                            let bestMatch = null;
+                            let bestScore = 0;
+                            let titleMatch = false;
+                            const normalizedNewTitle = newTitle
+                              .toLowerCase()
+                              .replace(/\s+/g, " ")
+                              .trim();
+                            for (const guard of existingGuards) {
+                              const guardTitle = String(guard?.title || "");
+                              const normalizedGuardTitle = guardTitle
+                                .toLowerCase()
+                                .replace(/\s+/g, " ")
+                                .trim();
+                              if (normalizedGuardTitle === normalizedNewTitle) {
+                                bestMatch = guard;
+                                bestScore = 1;
+                                titleMatch = true;
+                                break;
+                              }
+                              const score = promptSimilarity(
+                                guardTitle,
+                                guard?.body || "",
+                                newTitle,
+                                newBody
+                              );
+                              if (score > bestScore) {
+                                bestScore = score;
+                                bestMatch = guard;
+                              }
+                            }
+                            const MATCH_THRESHOLD = 0.72;
+                            if (
+                              bestMatch &&
+                              (titleMatch || bestScore >= MATCH_THRESHOLD)
+                            ) {
+                              const existingConfig =
+                                typeof bestMatch.config === "object" &&
+                                bestMatch.config
+                                  ? bestMatch.config
+                                  : {};
+                              const mergedConfig = {
+                                ...existingConfig,
+                                ...mergedConfigBase,
+                              };
+                              const nextVersion =
+                                (bestMatch.auto_generated_version || 0) + 1;
+                              const rawActivationThreshold =
+                                getAdminControlValue(
+                                  "auto_generated_guard_activation_version"
+                                );
+                              const guardActivationThreshold = Math.max(
+                                1,
+                                Number.isFinite(rawActivationThreshold)
+                                  ? Math.round(rawActivationThreshold)
+                                  : ADMIN_CONTROL_DEFAULTS.auto_generated_guard_activation_version
+                              );
+                              const updatePayload = {
+                                title: newTitle,
+                                preview: newPreview,
+                                body: newBody,
+                                tags: newTags,
+                                variables: newVariables,
+                                site_category: newSiteCategory,
+                                config: mergedConfig,
+                                auto_generated: true,
+                                auto_generated_source:
+                                  "intent-prompt-builder",
+                                auto_generated_version: nextVersion,
+                                user_modified_at: null,
+                                updated_at: new Date().toISOString(),
+                              };
+                              if (
+                                nextVersion >= guardActivationThreshold &&
+                                bestMatch.status !== "active"
+                              ) {
+                                updatePayload.status = "active";
+                              }
+
+                              const { error: updateErr } = await client
+                                .from("vg_guards")
+                                .update(updatePayload)
+                                .eq("id", bestMatch.id);
+
+                              if (updateErr) {
+                                vgWarn(
+                                  "[VG][intent] guard update failed",
+                                  updateErr
+                                );
+                              } else {
+                                reusedGuardId = bestMatch.id;
+                                vgInfo?.(
+                                  "[VG][intent] prompt updated existing guard",
+                                  {
+                                    guardId: bestMatch.id,
+                                    score: Number(bestScore.toFixed(3)),
+                                    nextVersion,
+                                    activationThreshold: guardActivationThreshold,
+                                  }
+                                );
+                              }
+                            }
+                          }
+                        } catch (reuseErr) {
+                          vgWarn(
+                            "[VG][intent] guard reuse lookup exception",
+                            reuseErr
+                          );
+                        }
+
+                        if (!reusedGuardId) {
+                          const insertPayload = {
+                            user_id: userId,
+                            title: newTitle,
+                            preview: newPreview,
+                            body: newBody,
+                            tags: newTags,
+                            variables: newVariables,
+                            site_category: newSiteCategory,
+                            config: mergedConfigBase,
+                            visibility: "private",
+                            status: "inactive",
+                            ownership_type: "personal",
+                            auto_generated: true,
+                            auto_generated_source: "intent-prompt-builder",
+                            auto_generated_version: 1,
+                            user_modified_at: null,
+                          };
+
+                          const { error: guardError } = await client
+                            .from("vg_guards")
+                            .insert(insertPayload);
+
+                          if (guardError) {
+                            vgWarn(
+                              "[VG][intent] guard insert failed",
+                              guardError
+                            );
+                            await client
+                              .from("intent_windows")
+                              .update({
+                                custom_prompt_error:
+                                  guardError?.message || String(guardError),
+                              })
+                              .eq("window_id", windowInsert?.window_id || null);
+                            continue;
+                          }
+                        }
+
+                        await client
+                          .from("intent_windows")
+                          .update({
+                            custom_prompt_created: true,
+                            custom_prompt_error: null,
+                          })
+                          .eq("window_id", windowInsert?.window_id || null);
+
+                        vgInfo?.(
+                          "[VG][intent] prompt created",
+                          insertPayload.title,
+                          insertPayload.config
+                        );
+                      } catch (promptException) {
+                        vgWarn(
+                          "[VG][intent] prompt builder exception",
+                          promptException
+                        );
+                        await client
+                          .from("intent_windows")
+                          .update({
+                            custom_prompt_error:
+                              promptException?.message ||
+                              String(promptException),
+                          })
+                          .eq("window_id", windowInsert?.window_id || null);
+                      }
+                    }
+                  }
+                }
+              } catch (fnErr) {
+                vgWarn("[VG][intent] insights exception", fnErr);
+              }
+            }
+          } catch (windowErr) {
+            vgWarn("[VG][intent] window insert failed:", windowErr);
+          }
+          resetIntentBatchCounter(counterKey);
+        } else {
+          vgInfo?.("[VG][intent] captured", logPayload);
+    }
+
+    return {
+      ok: true,
+      id: insertedId,
+      tokens: tokenCount,
+      batchReady,
+      count,
+      threshold: batchThreshold,
+    };
+  } catch (e) {
+    vgWarn("[VG][intent] capture exception:", e);
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+    case "VG_INTENT_RESPONSE_CAPTURE": {
+      try {
+        const payload = msg?.payload || {};
+        const intentMessageId = String(payload?.intentMessageId || "").trim();
+        if (!intentMessageId) {
+          return { ok: false, error: "MISSING_INTENT_MESSAGE_ID" };
+        }
+
+        const sanitized = sanitizeResponseExcerpt(payload?.excerpt || "");
+        if (!sanitized) {
+          return { ok: false, error: "EMPTY_EXCERPT" };
+        }
+        const excerpt = truncateResponseExcerpt(sanitized);
+        const hash = hashString(excerpt);
+        const capturedAtIso = payload?.capturedAt
+          ? new Date(payload.capturedAt).toISOString()
+          : new Date().toISOString();
+        const responseSource =
+          typeof payload?.source === "string" && payload.source
+            ? payload.source.toLowerCase()
+            : null;
+
+        const {
+          data: existing,
+          error: existingErr,
+        } = await client
+          .from("intent_messages")
+          .select("response_excerpt_hash")
+          .eq("intent_message_id", intentMessageId)
+          .maybeSingle();
+
+        if (existingErr) {
+          vgWarn("[VG][intent] response capture lookup failed", existingErr);
+          return {
+            ok: false,
+            error: existingErr.message || String(existingErr),
+          };
+        }
+
+        if (
+          existing?.response_excerpt_hash &&
+          existing.response_excerpt_hash === hash
+        ) {
+          return { ok: true, skipped: "DUPLICATE" };
+        }
+
+        const { error: updateErr } = await client
+          .from("intent_messages")
+          .update({
+            response_excerpt: excerpt,
+            response_excerpt_hash: hash,
+            response_captured_at: capturedAtIso,
+            response_source: responseSource,
+          })
+          .eq("intent_message_id", intentMessageId);
+
+        if (updateErr) {
+          vgWarn("[VG][intent] response capture update failed", updateErr);
+          return { ok: false, error: updateErr.message || String(updateErr) };
+        }
+
+        return { ok: true };
+      } catch (err) {
+        vgWarn("[VG][intent] response capture exception", err);
+        return { ok: false, error: String(err?.message || err) };
+      }
+    }
+
+// ===== COUNTER · Phase 1 Handshake (whitelist check only) =====
     case "COUNTER_HANDSHAKE": {
       try {
         const host = (msg?.payload?.host || "")
@@ -1709,10 +2602,15 @@ async function handleMessage(msg, _host = "", sender = null) {
           return { ok: false, error: errMsg };
         }
 
+        const fallbackPreview = body.replace(/\s+/g, " ").slice(0, 100).trim();
         const row = {
           user_id: session.user.id,
           title: meta?.title || "Saved Highlight",
           body,
+          preview:
+            typeof meta?.preview === "string"
+              ? meta.preview.trim().slice(0, 100)
+              : fallbackPreview,
           variables: meta?.variables || {},
           tags: Array.isArray(meta?.tags) ? meta.tags : [],
           site_category: meta?.site_category || "general",
@@ -2258,7 +3156,7 @@ async function handleMessage(msg, _host = "", sender = null) {
             url,
             type: "popup",
             width: 420,
-            height: 640,
+            height: 470,
             focused: true,
           });
           vgDebug("OPEN_POPUP → window", w?.id);
@@ -2307,7 +3205,7 @@ async function handleMessage(msg, _host = "", sender = null) {
           url,
           type: "popup",
           width: 384,
-          height: 572,
+          height: 470,
           focused: true,
         });
         return { ok: true, mode: "window", windowId: w?.id ?? null };
@@ -2939,6 +3837,63 @@ async function handleMessage(msg, _host = "", sender = null) {
       }
     }
 
+    case "VG_INTENT_FETCH_GUARDS": {
+      try {
+        vgDebug("[VG_INTENT_FETCH_GUARDS] in");
+        let session = await __vgGetSessionMaybeWait(_host);
+        if (!session?.user?.id) {
+          session = await __vgEnsureBGSession(10, 300);
+          if (!session?.user?.id) {
+            await __bgValidateAndRefreshSession();
+            session = await __vgGetSessionMaybeWait(_host);
+          }
+          if (!session?.user?.id) {
+            return { ok: true, guards: [] };
+          }
+        }
+
+        const columns =
+          "id,title,preview,body,tags,site_category,status,visibility,config,auto_generated,auto_generated_source,auto_generated_version,ownership_type,user_modified_at,updated_at,created_at";
+        const { data, error } = await client
+          .from("vg_guards")
+          .select(columns)
+          .eq("ownership_type", "personal")
+          .eq("status", "active")
+          .order("updated_at", { ascending: false })
+          .limit(500);
+
+        if (error) {
+          console.warn("[BG/VG_INTENT_FETCH_GUARDS] query error:", error);
+          return { ok: false, error: String(error.message || error) };
+        }
+
+        const guards = (Array.isArray(data) ? data : []).map((row) => ({
+          id: row.id,
+          title: row.title || "Custom Prompt",
+          preview: typeof row.preview === "string" ? row.preview : null,
+          body: row.body || "",
+          tags: Array.isArray(row.tags) ? row.tags : [],
+          siteCategory: row.site_category || null,
+          status: row.status || "inactive",
+          visibility: row.visibility || "private",
+          config:
+            row.config && typeof row.config === "object" ? row.config : null,
+          autoGenerated: Boolean(row.auto_generated),
+          autoSource: row.auto_generated_source || null,
+          autoVersion: row.auto_generated_version || 0,
+          ownershipType: row.ownership_type || "personal",
+          userModifiedAt: row.user_modified_at || null,
+          updatedAt: row.updated_at || null,
+          createdAt: row.created_at || null,
+        }));
+
+        return { ok: true, guards };
+      } catch (e) {
+        console.warn("[BG/VG_INTENT_FETCH_GUARDS] throw:", e);
+        return { ok: false, error: String(e?.message || e) };
+      }
+    }
+
     case "VG_LIST_CUSTOM_PROMPTS": {
       try {
         vgDebug("[VG_LIST_CUSTOM_PROMPTS] in");
@@ -2975,7 +3930,7 @@ async function handleMessage(msg, _host = "", sender = null) {
 
         // ⚠️ Only select columns that actually exist on vg_guards
         const sel =
-          "id, title, body, tags, site_category, status, visibility, updated_at, created_at";
+          "id, title, preview, body, tags, site_category, status, visibility, updated_at, created_at";
 
         // Let RLS restrict rows; avoid hard-coding the user column name here
         const { data, error } = await client
@@ -2996,6 +3951,7 @@ async function handleMessage(msg, _host = "", sender = null) {
         const items = rows.map((r) => ({
           id: r.id,
           name: r.title || "Custom Prompt",
+          preview: typeof r.preview === "string" ? r.preview : null,
           body: r.body || "",
           tags: Array.isArray(r.tags) ? r.tags : [],
           updatedAt:
@@ -3032,6 +3988,10 @@ async function handleMessage(msg, _host = "", sender = null) {
           user_id: session.user.id,
           title: (msg?.title || "Custom Guard").toString(),
           body: (msg?.body || "").toString(),
+          preview:
+            typeof msg?.preview === "string"
+              ? msg.preview.trim().slice(0, 100)
+              : null,
           variables: Array.isArray(msg?.variables) ? msg.variables : {},
           tags: Array.isArray(msg?.tags) ? msg.tags : [],
           site_category: (msg?.site_category || "general").toString(),
@@ -3039,13 +3999,17 @@ async function handleMessage(msg, _host = "", sender = null) {
             msg?.config && typeof msg.config === "object" ? msg.config : {},
           visibility: "private",
           status: "active",
+          auto_generated: false,
+          auto_generated_source: null,
+          auto_generated_version: 0,
+          user_modified_at: new Date().toISOString(),
         };
 
         const { data, error } = await client
           .from("vg_guards")
           .insert(payload)
           .select(
-            "id, title, body, tags, site_category, status, visibility, updated_at, created_at"
+            "id, title, preview, body, tags, site_category, status, visibility, updated_at, created_at"
           )
           .single();
 
@@ -3071,16 +4035,24 @@ async function handleMessage(msg, _host = "", sender = null) {
           patch.title = msg.patch.title;
         if (typeof msg?.patch?.body === "string") patch.body = msg.patch.body;
         if (Array.isArray(msg?.patch?.tags)) patch.tags = msg.patch.tags;
+        if (typeof msg?.patch?.preview === "string")
+          patch.preview = msg.patch.preview.trim().slice(0, 100);
+        else if (msg?.patch && "preview" in msg.patch && msg.patch.preview === null)
+          patch.preview = null;
 
         if (!Object.keys(patch).length)
           return { ok: false, error: "EMPTY_PATCH" };
+
+        patch.auto_generated = false;
+        patch.auto_generated_source = null;
+        patch.user_modified_at = new Date().toISOString();
 
         const { data, error } = await client
           .from("vg_guards")
           .update({ ...patch, updated_at: new Date().toISOString() })
           .eq("id", id)
           .select(
-            "id, title, body, tags, site_category, status, visibility, updated_at, created_at"
+            "id, title, preview, body, tags, site_category, status, visibility, updated_at, created_at"
           )
           .single();
 
@@ -3603,7 +4575,44 @@ client.auth.onAuthStateChange((_event, session) => {
 
     __vgBroadcastAuth(__VG_SIGNED_IN);
     __vgComputeAccessSnapshot(); // ← refresh team access snapshot on auth change
+    refreshAdminControls(true).catch(() => {});
   } catch (e) {
     console.warn("[BG] auth broadcast failed", e);
   }
 });
+const intentBatchCounters = new Map();
+
+function updateIntentBatchCounter(key, message, maxMessages) {
+  if (!key) {
+    return { count: 0, firstCapturedAt: null, messages: [] };
+  }
+  const entry =
+    intentBatchCounters.get(key) || {
+      count: 0,
+      firstCapturedAt: null,
+      messages: [],
+    };
+  entry.count += 1;
+  if (!entry.firstCapturedAt) {
+    entry.firstCapturedAt = Date.now();
+  }
+  if (message) {
+    entry.messages.push(message);
+    const limit = Math.max(
+      1,
+      Number.isFinite(maxMessages) && maxMessages > 0
+        ? Math.round(maxMessages)
+        : ADMIN_CONTROL_DEFAULTS.intent_window_batch_threshold
+    );
+    entry.messages = entry.messages
+      .slice(-limit)
+      .filter((m) => m && m.intent_message_id);
+  }
+  intentBatchCounters.set(key, entry);
+  return entry;
+}
+
+function resetIntentBatchCounter(key) {
+  if (!key) return;
+  intentBatchCounters.delete(key);
+}

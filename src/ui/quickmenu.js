@@ -1445,7 +1445,11 @@
 
     try {
       const resp = await sendBG("VG_LIST_CUSTOM_PROMPTS");
-      if (resp && resp.ok && Array.isArray(resp.items)) return resp.items;
+      if (resp && resp.ok && Array.isArray(resp.items)) {
+        return resp.items.filter(
+          (row) => String(row?.status || "").toLowerCase() === "active"
+        );
+      }
     } catch (_) {}
     return [];
   }
@@ -2375,6 +2379,21 @@
     }
 
     // === Preview Modal (shared by Quick Adds / Custom Prompts) ===
+    function formatPromptPreviewText(raw) {
+      const text = String(raw || "");
+      if (!text) return "";
+      return text
+        .replace(/\r\n/g, "\n")
+        .replace(/^[ \t]*#{1,6}\s*/gm, "") // strip Markdown headings
+        .replace(/^[ \t]*[-*]\s+/gm, "• ") // convert bullet markers
+        .replace(/\*\*(.*?)\*\*/g, "$1") // bold markers
+        .replace(/__(.*?)__/g, "$1")
+        .replace(/\*(.*?)\*/g, "$1") // italics
+        .replace(/`{1,3}([^`]+)`{1,3}/g, "$1") // inline code
+        .replace(/^\s+$/gm, "") // remove whitespace-only lines
+        .trimEnd();
+    }
+
     function openPromptPreview(opts) {
       const title = String(opts?.title || "Preview");
       const body = String(opts?.body || "");
@@ -2462,7 +2481,7 @@
       const bodyEl = document.createElement("div");
       bodyEl.style.cssText =
         "padding:16px;white-space:pre-wrap;line-height:1.5;max-height:70vh;overflow:auto;";
-      bodyEl.textContent = body;
+      bodyEl.textContent = formatPromptPreviewText(body);
 
       const footer = document.createElement("footer");
       // Layout: [Close] ………………… [Edit] [Insert]
