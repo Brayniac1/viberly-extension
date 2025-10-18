@@ -544,7 +544,9 @@ function schedulePostInputRefresh(composer, previousText) {
       const previousRawText = state.lastRawText || "";
       const previousCaret =
         typeof state.lastCaret === "number" ? state.lastCaret : -1;
-      const { text: currentRawText = "" } = readComposer(composer);
+      const { text: currentRawRaw = "" } = readComposer(composer);
+      const currentRawText = normalizeVisibleText(currentRawRaw);
+      const previousNormalized = normalizeVisibleText(previousRawText);
       const currentCaret = getComposerCaretOffset(composer);
       const hadSuggestion = Boolean(state.suggestion);
       const cooldownActiveBefore = isSuggestionCooldownActive(state);
@@ -560,13 +562,13 @@ function schedulePostInputRefresh(composer, previousText) {
         !pasteEvent &&
         !composing &&
         ((typeof inputType === "string" && inputType.startsWith("delete")) ||
-          currentRawText.length < previousRawText.length);
+          currentRawText.length < previousNormalized.length);
 
       const becameEmpty =
         !undoRedo &&
         !pasteEvent &&
         !composing &&
-        !currentRawText.trim().length;
+        !currentRawText.length;
 
       if ((deletionEvent || becameEmpty) && hadSuggestion) {
         state.suggestion = null;
@@ -707,3 +709,8 @@ function schedulePostInputRefresh(composer, previousText) {
     `${LOG_PREFIX} skeleton ready → run window.${DEVTOOLS_KEY}.openModalTest()`
   );
 })();
+  function normalizeVisibleText(text = "") {
+    return String(text || "")
+      .replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF]/g, "")
+      .trim();
+  }

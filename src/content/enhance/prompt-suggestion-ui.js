@@ -22,7 +22,8 @@ const MARKER_MODAL_CLASS = "vib-marker-modal";
 
 const overlayMap = new WeakMap();
 const tooltipMap = new WeakMap();
-const PROMPT_TOOLTIP_DEBUG = true;
+const PROMPT_TOOLTIP_DEBUG =
+  typeof window !== "undefined" && Boolean(window.VG_DEBUG_PROMPT_TOOLTIP);
 
 const SENTENCE_PUNCTUATION_RE = /[.!?;,:]/;
 
@@ -51,7 +52,7 @@ function isCaretAtTextEnd(composer) {
   const caret = getCaretOffsetInComposer(composer);
   if (caret < 0) return true;
   const remaining = text.slice(caret);
-  return remaining.trim().length === 0;
+  return normalizeVisibleText(remaining).length === 0;
 }
 
 function getComposerPlainText(composer) {
@@ -60,6 +61,12 @@ function getComposerPlainText(composer) {
     return composer.value;
   }
   return String(composer.innerText || composer.textContent || "");
+}
+
+function normalizeVisibleText(text = "") {
+  return String(text || "")
+    .replace(/[\u200B\u200C\u200D\u200E\u200F\uFEFF]/g, "")
+    .trim();
 }
 
 const TOOLTIP_HIDE_DELAY_MS = 160;
