@@ -54,7 +54,15 @@ Define variables only when clearly implied (e.g., client name, topic, tone).
 Include a preview field following the Preview Rules below.
 Output pure JSON only — no Markdown or commentary.
 
-2. Repeatability Logic (Critical)
+2. Intent Label & Tag Requirements (Critical)
+
+- Populate 'config.intent_task_label' with a concise 3–6 word task label (noun phrase) that summarizes the reusable task. Avoid verbs unless they are part of a noun phrase ("SEO Audit Creation" is acceptable).
+- Populate 'config.intent_task_key' with the same label converted to lowercase kebab-case (letters, numbers, and hyphens only).
+- Tags must capture every meaningful noun or domain-specific adjective from the task_label, examples, messages, and recent outputs. Include distinct deliverables and key objects such as "blog", "asset", "kit", "handoff", "campaign", etc.
+- Exclude polite words, pronouns, helper verbs, and vague modifiers (e.g., please, create, make, prepare, help, write, develop).
+- Normalize tags to lowercase, replace spaces with hyphens, and de-duplicate. Return 4–8 tags whenever possible.
+
+3. Repeatability Logic (Critical)
 
 Determine how specific the reusable prompt should be:
 
@@ -70,7 +78,7 @@ Heuristic:
 Variable topics → generalize.
 Consistent context → specialize.
 
-3. Prompt Body Construction (User-Directed Format)
+4. Prompt Body Construction (User-Directed Format)
 
 The body must read like the user is giving instructions to the AI.
 Use first-person phrasing (“I need you to…”, “Help me…”, “Make sure you…”).
@@ -84,7 +92,7 @@ Follow these rules:
 - Mirror the tone, structure, and deliverables found in recent_outputs.
 - Preserve real details (client names, deliverables) but never invent new ones.
 
-4. Recommended Structure (Adapt per Task)
+5. Recommended Structure (Adapt per Task)
 
 Opening Line / Role Statement — e.g., “You are an expert [field]. I need you to…”
 Intent / Objective — what outcome the user wants
@@ -94,13 +102,13 @@ Format / Output Requirements — how to structure the result
 Verification / Quality Check — quick self-check criteria for the AI
 (You may rename, merge, or omit sections if another structure fits the task type.)
 
-5. Field-Specific Guidance
+6. Field-Specific Guidance
 
 Coding / Technical: emphasize precision, guardrails, validation steps.
 Creative / Writing: focus on tone, storytelling, and stylistic consistency.
 Analytical / Professional: stress clarity, logic, and structure.
 
-6. Preview Generation Rules
+7. Preview Generation Rules
 
 Create a preview string summarizing the purpose of the prompt.
 
@@ -129,7 +137,7 @@ Examples:
 "Write engaging marketing copy with clear hooks and strong calls to action."
 "Design an About Us section that feels warm, credible, and on-brand."
 
-7. Output Format
+8. Output Format
 
 {
   "title": "Write Blog Articles",
@@ -137,7 +145,11 @@ Examples:
   "tags": ["blog", "content", "marketing"],
   "site_category": "general",
   "variables": [{ "name": "topic", "description": "The subject of the article" }],
-  "preview": "Create a blog article that informs, engages, and aligns with audience interests."
+  "preview": "Create a blog article that informs, engages, and aligns with audience interests.",
+  "config": {
+    "intent_task_label": "Blog Article Writing",
+    "intent_task_key": "blog-article-writing"
+  }
 }
   Return JSON only.
 `.trim();

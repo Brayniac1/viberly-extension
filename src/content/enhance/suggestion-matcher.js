@@ -3,6 +3,90 @@
 
 const TOKEN_REGEX = /[a-z0-9]+/gi;
 
+const STOP_TOKENS = new Set([
+  "a",
+  "an",
+  "and",
+  "the",
+  "to",
+  "of",
+  "for",
+  "on",
+  "in",
+  "with",
+  "by",
+  "at",
+  "from",
+  "about",
+  "into",
+  "please",
+  "kindly",
+  "help",
+  "assist",
+  "prepare",
+  "create",
+  "make",
+  "build",
+  "craft",
+  "write",
+  "generate",
+  "produce",
+  "develop",
+  "provide",
+  "give",
+  "do",
+  "need",
+  "needto",
+  "need_to",
+  "to",
+  "please",
+  "could",
+  "would",
+  "should",
+  "can",
+  "let",
+  "us",
+  "me",
+  "my",
+  "your",
+  "their",
+  "our",
+  "his",
+  "her",
+  "its",
+  "be",
+  "am",
+  "is",
+  "are",
+  "was",
+  "were",
+  "being",
+  "been",
+  "have",
+  "has",
+  "had",
+  "will",
+  "shall",
+  "may",
+  "might",
+  "must",
+  "also",
+  "just",
+  "more",
+  "most",
+  "very",
+  "really",
+  "some",
+  "any",
+  "all",
+  "each",
+  "every",
+  "other",
+  "another",
+  "such",
+  "etc",
+]);
+
 function uniqueTokens(tokens) {
   const out = [];
   const seen = new Set();
@@ -42,6 +126,18 @@ function tokenize(text) {
   if (!matches) return [];
   const stemmed = matches.map(stemToken);
   return uniqueTokens(stemmed);
+}
+
+function filterSignificantTokens(tokens = []) {
+  if (!tokens.length) return [];
+  const output = [];
+  for (const token of tokens) {
+    if (!token) continue;
+    if (token.length <= 2) continue;
+    if (STOP_TOKENS.has(token)) continue;
+    output.push(token);
+  }
+  return output;
 }
 
 function normalizeForNGrams(value) {
@@ -159,6 +255,8 @@ export function deriveQueryFeatures({ labelText = "", tailText = "", tags = [] }
     tailText,
     labelTokens,
     tailTokens,
+    significantLabelTokens: filterSignificantTokens(labelTokens),
+    significantTailTokens: filterSignificantTokens(tailTokens),
     tagTokens,
   };
 }
@@ -171,6 +269,8 @@ export function rankGuardSuggestions({ guards = [], query }) {
     tailText = "",
     labelTokens = [],
     tailTokens = [],
+    significantLabelTokens = [],
+    significantTailTokens = [],
     tagTokens = [],
   } = query;
 
@@ -182,17 +282,37 @@ export function rankGuardSuggestions({ guards = [], query }) {
 
     const candidateTokens = buildCandidateTokens(guard);
     const previewTokens = tokenize(guard.preview);
+    const significantCandidateTokens = filterSignificantTokens(candidateTokens);
+    const significantPreviewTokens = filterSignificantTokens(previewTokens);
     const guardTagTokens = buildTagTokens(guard.tags);
     const usageBoost = computeUsageBoost(guard.localUsage);
 
-    let baseScore = overlapScore(labelTokens, candidateTokens);
+    const labelOverlap = tokenCoverage(
+      significantLabelTokens,
+      significantCandidateTokens
+    );
+
+    let baseScore = labelOverlap.matches
+      ? overlapScore(significantLabelTokens, significantCandidateTokens)
+      : 0;
 
     if (!baseScore && labelText) {
       baseScore = partialContainsScore(labelText, guard.title || guard.preview || "");
     }
 
-    const previewScore = tailTokens.length
-      ? overlapScore(tailTokens, previewTokens)
+    const tailOverlap = tokenCoverage(
+      significantTailTokens,
+      significantPreviewTokens
+    );
+
+    const previewScore = tailOverlap.matches
+      ? overlapScore(significantTailTokens, significantPreviewTokens)
+      : 0;
+
+    const meaningfulMatches = (labelOverlap.matches || 0) + (tailOverlap.matches || 0);
+
+    const tagTokenOverlap = guardTagTokens.length
+      ? overlapScore(tagTokens, guardTagTokens)
       : 0;
 
     const combinedCandidateText = [
@@ -211,9 +331,16 @@ export function rankGuardSuggestions({ guards = [], query }) {
     // Encourage guards whose tags align with either the query tags or typed tokens.
     let tagScore = 0;
     if (guardTagTokens.length) {
-      const tagOverlap = overlapScore(tagTokens, guardTagTokens);
-      const tailOverlap = overlapScore(tailTokens, guardTagTokens);
-      tagScore = Math.max(tagOverlap, tailOverlap);
+      const tailTagOverlap = overlapScore(tailTokens, guardTagTokens);
+      tagScore = Math.max(tagTokenOverlap, tailTagOverlap);
+    }
+
+    const hasTagSupport = tagTokenOverlap >= 0.2 || tagScore >= 0.2;
+    const hasMeaningfulOverlap =
+      meaningfulMatches >= 2 || (meaningfulMatches >= 1 && hasTagSupport);
+
+    if (!hasMeaningfulOverlap) {
+      continue;
     }
 
     const combined =
@@ -231,6 +358,7 @@ export function rankGuardSuggestions({ guards = [], query }) {
       charScore: Number(characterScore.toFixed(3)),
       tagScore: Number(tagScore.toFixed(3)),
       usageBoost: Number(usageBoost.toFixed(3)),
+      matches: meaningfulMatches,
     };
 
     ranked.push({

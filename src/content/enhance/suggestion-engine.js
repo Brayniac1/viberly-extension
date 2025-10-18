@@ -11,6 +11,10 @@ import {
   deriveQueryFeatures,
   rankGuardSuggestions,
 } from "./suggestion-matcher.js";
+import {
+  isSuggestionCooldownActive,
+  resetSuggestionTyping,
+} from "./state.js";
 
 const DISPLAY_THRESHOLD = 0.28;
 const MIN_CONFIDENCE = 0.48;
@@ -51,6 +55,7 @@ function clearSuggestionState(state) {
   state.suggestion = null;
   state.suggestionCandidates = [];
   state.suggestionIndex = -1;
+  resetSuggestionTyping(state);
 }
 
 export async function refreshSuggestion({ composer, state, text }) {
@@ -72,6 +77,11 @@ export async function refreshSuggestion({ composer, state, text }) {
   }
 
   if (state.suggestionHiddenUntil && Date.now() < state.suggestionHiddenUntil) {
+    clearSuggestionState(state);
+    return null;
+  }
+
+  if (isSuggestionCooldownActive(state)) {
     clearSuggestionState(state);
     return null;
   }
@@ -156,6 +166,7 @@ export async function refreshSuggestion({ composer, state, text }) {
     breakdown: active.breakdown,
     query,
   };
+  resetSuggestionTyping(state);
 
   recordGuardShown(active.guard.id);
   return state.suggestion;
@@ -178,6 +189,7 @@ export function cycleSuggestion(state, direction = 1) {
     breakdown: active.breakdown,
     query: active.query || null,
   };
+  resetSuggestionTyping(state);
   recordGuardShown(active.guard.id);
   return state.suggestion;
 }

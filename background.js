@@ -225,6 +225,97 @@ const client = supabase.createClient(VG_SUPABASE_URL, VG_SUPABASE_ANON_KEY, {
   global: { fetch },
 });
 
+// ---- Admin controls (remote-config style knobs) ----
+const ADMIN_CONTROL_DEFAULTS = {
+  intent_window_batch_threshold: 3,
+  auto_generated_guard_activation_version: 3,
+};
+
+const ADMIN_CONTROLS_REFRESH_MS = 5 * 60 * 1000;
+
+const adminControlsState = {
+  values: { ...ADMIN_CONTROL_DEFAULTS },
+  loadedAt: 0,
+  pending: null,
+};
+
+function normalizeAdminControlNumber(key, value) {
+  const fallback = ADMIN_CONTROL_DEFAULTS[key];
+  const parsed =
+    typeof value === "number"
+      ? value
+      : value != null
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  const min = key === "intent_window_batch_threshold" ? 1 : 0;
+  const coerced = Math.max(min, Math.round(parsed));
+  return Number.isFinite(coerced) ? coerced : fallback;
+}
+
+async function refreshAdminControls(force = false) {
+  const now = Date.now();
+  if (!force && adminControlsState.pending) {
+    try {
+      await adminControlsState.pending;
+    } catch {
+      return adminControlsState.values;
+    }
+    return adminControlsState.values;
+  }
+  if (!force && now - adminControlsState.loadedAt < ADMIN_CONTROLS_REFRESH_MS) {
+    return adminControlsState.values;
+  }
+  const task = (async () => {
+    try {
+      const { data, error } = await client
+        .from("admin-controls")
+        .select("key,value");
+      if (error) {
+        vgWarn?.("[VG][admin-controls] fetch failed", error);
+        return adminControlsState.values;
+      }
+      if (Array.isArray(data)) {
+        for (const row of data) {
+          const key = row?.key;
+          if (!(key in ADMIN_CONTROL_DEFAULTS)) continue;
+          adminControlsState.values[key] = normalizeAdminControlNumber(
+            key,
+            row?.value
+          );
+        }
+        adminControlsState.loadedAt = Date.now();
+      }
+    } catch (err) {
+      vgWarn?.("[VG][admin-controls] fetch exception", err);
+    } finally {
+      adminControlsState.pending = null;
+    }
+    return adminControlsState.values;
+  })();
+  adminControlsState.pending = task;
+  return task
+    .catch(() => adminControlsState.values)
+    .then(() => adminControlsState.values);
+}
+
+function getAdminControlValue(key) {
+  if (!(key in ADMIN_CONTROL_DEFAULTS)) {
+    return undefined;
+  }
+  const now = Date.now();
+  if (now - adminControlsState.loadedAt > ADMIN_CONTROLS_REFRESH_MS) {
+    refreshAdminControls().catch(() => {});
+  }
+  const value = adminControlsState.values[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  return ADMIN_CONTROL_DEFAULTS[key];
+}
+
+refreshAdminControls(true).catch(() => {});
+
 // ---------- Access Gate v1 (Teams) ----------
 // Source of truth: vg_profiles.team_id → teams.subscription_status
 // Allow: 'active', 'trialing'  |  Block: 'trial_expired','past_due','canceled','expired'
@@ -1551,12 +1642,26 @@ async function handleMessage(msg, _host = "", sender = null) {
         const capturedIso = data?.captured_at || new Date().toISOString();
         const capturedTs = Date.parse(capturedIso);
 
+        const rawThreshold = getAdminControlValue(
+          "intent_window_batch_threshold"
+        );
+        const batchThreshold = Math.max(
+          1,
+          Number.isFinite(rawThreshold)
+            ? rawThreshold
+            : ADMIN_CONTROL_DEFAULTS.intent_window_batch_threshold
+        );
+
         const counterKey = `${userId}`;
-        const counter = updateIntentBatchCounter(counterKey, {
-          intent_message_id: insertedId,
-          captured_at: capturedIso,
-          source_url: sourceUrl,
-        });
+        const counter = updateIntentBatchCounter(
+          counterKey,
+          {
+            intent_message_id: insertedId,
+            captured_at: capturedIso,
+            source_url: sourceUrl,
+          },
+          batchThreshold
+        );
         const { count, messages } = counter;
 
         const logPayload = {
@@ -1564,15 +1669,15 @@ async function handleMessage(msg, _host = "", sender = null) {
           host: sourceUrl,
           tokens: tokenCount,
           count,
-          threshold: INTENT_BATCH_THRESHOLD,
+          threshold: batchThreshold,
         };
 
         let batchReady = false;
-        if (count >= INTENT_BATCH_THRESHOLD) {
+        if (count >= batchThreshold) {
           batchReady = true;
           vgInfo?.("[VG][intent] batch ready", logPayload);
           const windowMessages = Array.isArray(messages)
-            ? messages.slice(-INTENT_BATCH_THRESHOLD)
+            ? messages.slice(-batchThreshold)
             : [];
           const messageIds = windowMessages
             .map((m) => m?.intent_message_id)
@@ -1949,6 +2054,16 @@ async function handleMessage(msg, _host = "", sender = null) {
                               };
                               const nextVersion =
                                 (bestMatch.auto_generated_version || 0) + 1;
+                              const rawActivationThreshold =
+                                getAdminControlValue(
+                                  "auto_generated_guard_activation_version"
+                                );
+                              const guardActivationThreshold = Math.max(
+                                1,
+                                Number.isFinite(rawActivationThreshold)
+                                  ? Math.round(rawActivationThreshold)
+                                  : ADMIN_CONTROL_DEFAULTS.auto_generated_guard_activation_version
+                              );
                               const updatePayload = {
                                 title: newTitle,
                                 preview: newPreview,
@@ -1965,7 +2080,7 @@ async function handleMessage(msg, _host = "", sender = null) {
                                 updated_at: new Date().toISOString(),
                               };
                               if (
-                                nextVersion >= 3 &&
+                                nextVersion >= guardActivationThreshold &&
                                 bestMatch.status !== "active"
                               ) {
                                 updatePayload.status = "active";
@@ -1988,6 +2103,8 @@ async function handleMessage(msg, _host = "", sender = null) {
                                   {
                                     guardId: bestMatch.id,
                                     score: Number(bestScore.toFixed(3)),
+                                    nextVersion,
+                                    activationThreshold: guardActivationThreshold,
                                   }
                                 );
                               }
@@ -2087,7 +2204,7 @@ async function handleMessage(msg, _host = "", sender = null) {
       tokens: tokenCount,
       batchReady,
       count,
-      threshold: INTENT_BATCH_THRESHOLD,
+      threshold: batchThreshold,
     };
   } catch (e) {
     vgWarn("[VG][intent] capture exception:", e);
@@ -3035,7 +3152,7 @@ async function handleMessage(msg, _host = "", sender = null) {
             url,
             type: "popup",
             width: 420,
-            height: 640,
+            height: 470,
             focused: true,
           });
           vgDebug("OPEN_POPUP → window", w?.id);
@@ -3084,7 +3201,7 @@ async function handleMessage(msg, _host = "", sender = null) {
           url,
           type: "popup",
           width: 384,
-          height: 572,
+          height: 470,
           focused: true,
         });
         return { ok: true, mode: "window", windowId: w?.id ?? null };
@@ -4454,14 +4571,14 @@ client.auth.onAuthStateChange((_event, session) => {
 
     __vgBroadcastAuth(__VG_SIGNED_IN);
     __vgComputeAccessSnapshot(); // ← refresh team access snapshot on auth change
+    refreshAdminControls(true).catch(() => {});
   } catch (e) {
     console.warn("[BG] auth broadcast failed", e);
   }
 });
-const INTENT_BATCH_THRESHOLD = 3;
 const intentBatchCounters = new Map();
 
-function updateIntentBatchCounter(key, message) {
+function updateIntentBatchCounter(key, message, maxMessages) {
   if (!key) {
     return { count: 0, firstCapturedAt: null, messages: [] };
   }
@@ -4477,8 +4594,14 @@ function updateIntentBatchCounter(key, message) {
   }
   if (message) {
     entry.messages.push(message);
+    const limit = Math.max(
+      1,
+      Number.isFinite(maxMessages) && maxMessages > 0
+        ? Math.round(maxMessages)
+        : ADMIN_CONTROL_DEFAULTS.intent_window_batch_threshold
+    );
     entry.messages = entry.messages
-      .slice(-INTENT_BATCH_THRESHOLD)
+      .slice(-limit)
       .filter((m) => m && m.intent_message_id);
   }
   intentBatchCounters.set(key, entry);

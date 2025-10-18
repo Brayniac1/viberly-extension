@@ -12,6 +12,8 @@ export function getComposerState(composer) {
       scrollHandlers: [],
       mutationObserver: null,
       lastText: "",
+      lastRawText: "",
+      lastCaret: -1,
       improveScore: null,
       intentSegments: [],
       intentSpans: [],
@@ -31,6 +33,17 @@ export function getComposerState(composer) {
       suggestionHiddenUntil: 0,
       suggestionHistory: [],
       suggestionEvalToken: 0,
+      suggestionCooldown: {
+        active: false,
+        reason: "",
+        triggeredAt: 0,
+        baselineText: "",
+        baselineCaret: -1,
+        sentenceStage: null,
+      },
+      typedSinceSuggestion: 0,
+      wordsTypedSinceSuggestion: 0,
+      suggestionTypingBuffer: "",
     };
     composerState.set(composer, state);
   }
@@ -65,6 +78,8 @@ export function clearComposerState(composer) {
     state.scrollHandlers = [];
     state.mutationObserver = null;
     state.lastText = "";
+    state.lastRawText = "";
+    state.lastCaret = -1;
     state.improveScore = null;
     state.intentSegments = [];
     state.intentSpans = [];
@@ -82,10 +97,94 @@ export function clearComposerState(composer) {
     state.suggestionHiddenUntil = 0;
     state.suggestionHistory = [];
     state.suggestionEvalToken = 0;
+    state.suggestionCooldown = {
+      active: false,
+      reason: "",
+      triggeredAt: 0,
+      baselineText: "",
+      baselineCaret: -1,
+      sentenceStage: null,
+    };
+    state.typedSinceSuggestion = 0;
+    state.wordsTypedSinceSuggestion = 0;
+    state.suggestionTypingBuffer = "";
   }
   composerState.delete(composer);
 }
 
-export function setCooldown() {
-  /* cooldown disabled for Phase 2 */
+export function resetSuggestionTyping(state) {
+  if (!state) return;
+  state.typedSinceSuggestion = 0;
+  state.wordsTypedSinceSuggestion = 0;
+  state.suggestionTypingBuffer = "";
+  if (state.suggestionCooldown) {
+    state.suggestionCooldown.sentenceStage = null;
+  }
+}
+
+export function activateSuggestionCooldown(state, reason = "", context = {}) {
+  if (!state) return;
+  const baselineText =
+    typeof context.text === "string" ? context.text : state.lastRawText || "";
+  const baselineCaret =
+    typeof context.caret === "number"
+      ? context.caret
+      : typeof state.lastCaret === "number"
+      ? state.lastCaret
+      : -1;
+  state.suggestionCooldown = {
+    active: true,
+    reason: reason || state.suggestionCooldown?.reason || "",
+    triggeredAt: Date.now(),
+    baselineText,
+    baselineCaret,
+    sentenceStage: null,
+  };
+  resetSuggestionTyping(state);
+}
+
+export function clearSuggestionCooldown(state, reason = "") {
+  if (!state) return;
+  state.suggestionCooldown = {
+    active: false,
+    reason,
+    triggeredAt: 0,
+    baselineText: "",
+    baselineCaret: -1,
+    sentenceStage: null,
+  };
+  resetSuggestionTyping(state);
+}
+
+export function isSuggestionCooldownActive(state) {
+  return Boolean(state?.suggestionCooldown?.active);
+}
+
+export function noteSuggestionTyping(state, text = "") {
+  if (!state) return { charCount: 0, wordCount: 0 };
+  const payload = typeof text === "string" ? text : "";
+  if (payload) {
+    const limited = (state.suggestionTypingBuffer + payload).slice(-200);
+    state.suggestionTypingBuffer = limited;
+    const nonWhitespace = payload.replace(/\s+/g, "");
+    state.typedSinceSuggestion += nonWhitespace.length;
+    const words = limited
+      .split(/\s+/)
+      .map((part) => part.trim())
+      .filter((part) => /[\p{L}\p{N}]/u.test(part));
+    state.wordsTypedSinceSuggestion = words.length;
+  }
+  return {
+    charCount: state.typedSinceSuggestion,
+    wordCount: state.wordsTypedSinceSuggestion,
+  };
+}
+
+export function getSuggestionSentenceStage(state) {
+  return state?.suggestionCooldown?.sentenceStage || null;
+}
+
+export function setSuggestionSentenceStage(state, stage) {
+  if (!state || !state.suggestionCooldown) return;
+  state.suggestionCooldown.sentenceStage = stage;
 }

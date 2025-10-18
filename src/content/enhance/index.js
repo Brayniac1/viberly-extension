@@ -9,7 +9,16 @@ import { initComposerWatch } from "./composer-watch.js";
 import { shouldTrigger } from "./detect-intent.js";
 import { readComposer } from "./read-composer.js";
 import { extractSpans } from "./extract-spans.js";
-import { getComposerState, clearComposerState } from "./state.js";
+import {
+  activateSuggestionCooldown,
+  clearComposerState,
+  clearSuggestionCooldown,
+  getComposerState,
+  getSuggestionSentenceStage,
+  isSuggestionCooldownActive,
+  noteSuggestionTyping,
+  setSuggestionSentenceStage,
+} from "./state.js";
 import {
   updateMarkers,
   clearMarkers,
@@ -72,6 +81,112 @@ function computeImproveScore(text) {
   const mix = Math.min(1, rand * 0.35 + lengthFactor * 0.65);
   const value = Math.round(67 + mix * 67);
   return Math.max(67, Math.min(134, value));
+}
+
+const SENTENCE_END_RE = /[.!?]/;
+const SENTENCE_TRAILING_RE = /["')\]]/;
+
+function isHistoryInputType(type = "") {
+  return type === "historyUndo" || type === "historyRedo";
+}
+
+function isPasteInputType(type = "") {
+  return /^insertFromPaste/.test(type);
+}
+
+function isParagraphInputType(type = "") {
+  return type === "insertParagraph" || type === "insertLineBreak";
+}
+
+function extractInsertedText(previous = "", next = "") {
+  if (typeof previous !== "string" || typeof next !== "string") return "";
+  if (!next) return "";
+  let start = 0;
+  const minLen = Math.min(previous.length, next.length);
+  while (start < minLen && previous[start] === next[start]) {
+    start += 1;
+  }
+  let endPrev = previous.length - 1;
+  let endNext = next.length - 1;
+  while (endPrev >= start && endNext >= start && previous[endPrev] === next[endNext]) {
+    endPrev -= 1;
+    endNext -= 1;
+  }
+  return next.slice(start, endNext + 1);
+}
+
+function getComposerCaretOffset(composer) {
+  if (!composer) return -1;
+  if (
+    "selectionStart" in composer &&
+    typeof composer.selectionStart === "number"
+  ) {
+    try {
+      return composer.selectionStart;
+    } catch {
+      return -1;
+    }
+  }
+  try {
+    const doc = composer.ownerDocument || document;
+    const sel = doc.getSelection?.();
+    if (!sel || sel.rangeCount === 0) return -1;
+    const range = sel.getRangeAt(0);
+    if (!composer.contains(range.startContainer)) return -1;
+    const preRange = range.cloneRange();
+    preRange.selectNodeContents(composer);
+    preRange.setEnd(range.startContainer, range.startOffset);
+    return preRange.toString().length;
+  } catch {
+    return -1;
+  }
+}
+
+function advanceSentenceStageForCooldown(state, text = "") {
+  if (!state || !text || !isSuggestionCooldownActive(state)) return false;
+  let stage = getSuggestionSentenceStage(state);
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (char === "\n") {
+      stage = null;
+      continue;
+    }
+    const isSentenceEnd = SENTENCE_END_RE.test(char);
+    if (!stage) {
+      if (isSentenceEnd) {
+        stage = "punctuation";
+      }
+      continue;
+    }
+    if (stage === "punctuation") {
+      if (isSentenceEnd) {
+        stage = "punctuation";
+        continue;
+      }
+      if (SENTENCE_TRAILING_RE.test(char)) {
+        continue;
+      }
+      if (/\s/.test(char)) {
+        stage = "afterSpace";
+        continue;
+      }
+      stage = null;
+      continue;
+    }
+    if (stage === "afterSpace") {
+      if (/\s/.test(char)) {
+        continue;
+      }
+      if (isSentenceEnd) {
+        stage = "punctuation";
+        continue;
+      }
+      setSuggestionSentenceStage(state, null);
+      return true;
+    }
+  }
+  setSuggestionSentenceStage(state, stage || null);
+  return false;
 }
 
 function normalizeSegmentBounds(segment, textLength) {
@@ -190,6 +305,7 @@ function applyIntentToComposer({ composer, text, map, segments, state }) {
   state.intentSpans = spans;
   state.lastMap = map;
   const trimmed = text.trim();
+  state.lastRawText = text;
   state.lastText = trimmed;
   state.improveScore = spans.length ? computeImproveScore(trimmed) : null;
   const composerId = getMarkerComposerId(composer);
@@ -421,15 +537,93 @@ function schedulePostInputRefresh(composer, previousText) {
       ensureMutationObserver(composer);
       updatePromptSuggestionUI(composer);
     },
-    onInput: (composer) => {
+    onInput: (composer, event) => {
       const state = getComposerState(composer);
       if (!state) return;
-      const previousText = state.lastText || "";
+      const previousTrimmed = state.lastText || "";
+      const previousRawText = state.lastRawText || "";
+      const previousCaret =
+        typeof state.lastCaret === "number" ? state.lastCaret : -1;
+      const { text: currentRawText = "" } = readComposer(composer);
+      const currentCaret = getComposerCaretOffset(composer);
+      const hadSuggestion = Boolean(state.suggestion);
+      const cooldownActiveBefore = isSuggestionCooldownActive(state);
+      const inputType = event?.inputType || "";
+      const undoRedo = isHistoryInputType(inputType);
+      const pasteEvent = isPasteInputType(inputType);
+      const paragraphEvent = isParagraphInputType(inputType);
+      const composing = Boolean(event?.isComposing);
+      let insertedText = "";
+
+      const deletionEvent =
+        !undoRedo &&
+        !pasteEvent &&
+        !composing &&
+        ((typeof inputType === "string" && inputType.startsWith("delete")) ||
+          currentRawText.length < previousRawText.length);
+
+      const becameEmpty =
+        !undoRedo &&
+        !pasteEvent &&
+        !composing &&
+        !currentRawText.trim().length;
+
+      if ((deletionEvent || becameEmpty) && hadSuggestion) {
+        state.suggestion = null;
+        state.suggestionCandidates = [];
+        state.suggestionIndex = -1;
+        state.suggestionEvalToken = 0;
+        state.suggestionHiddenUntil = Date.now() + 400;
+        clearPromptSuggestionUI(composer);
+      }
+
+      if ((hadSuggestion || cooldownActiveBefore) && !undoRedo && !composing) {
+        insertedText = extractInsertedText(previousRawText, currentRawText);
+
+        if (hadSuggestion && !cooldownActiveBefore && !pasteEvent) {
+          const { charCount, wordCount } = noteSuggestionTyping(
+            state,
+            insertedText
+          );
+          if (charCount >= 10 || wordCount >= 2) {
+            activateSuggestionCooldown(state, "typing", {
+              text: previousRawText,
+              caret: previousCaret,
+            });
+          }
+        }
+
+        if (cooldownActiveBefore && !pasteEvent) {
+          // Skip cooldown expiry adjustments for paste events; they often replace large blocks.
+          const paragraphTriggered =
+            paragraphEvent || (insertedText && insertedText.includes("\n"));
+          const baselineText = state.suggestionCooldown?.baselineText || "";
+          const baselineCaret =
+            typeof state.suggestionCooldown?.baselineCaret === "number"
+              ? state.suggestionCooldown.baselineCaret
+              : -1;
+          const progressedBeyondBaseline =
+            currentRawText.length > baselineText.length ||
+            (baselineCaret >= 0 && currentCaret > baselineCaret);
+
+          if (paragraphTriggered) {
+            clearSuggestionCooldown(state, "paragraph");
+          } else if (insertedText && progressedBeyondBaseline) {
+            const cleared = advanceSentenceStageForCooldown(state, insertedText);
+            if (cleared) {
+              clearSuggestionCooldown(state, "sentence");
+            }
+          }
+        }
+      }
+
+      state.lastCaret = currentCaret;
+
       updateComposerIntent(composer);
       ensureResizeObserver(composer);
       ensureScrollObservers(composer);
       ensureMutationObserver(composer);
-      schedulePostInputRefresh(composer, previousText);
+      schedulePostInputRefresh(composer, previousTrimmed);
       updatePromptSuggestionUI(composer);
     },
     onComposerBlur: (composer) => {

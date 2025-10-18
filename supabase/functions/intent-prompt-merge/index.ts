@@ -27,12 +27,16 @@ function bad(message: string, status = 400) {
 const SYSTEM_PROMPT = `
 You are Viberly’s Prompt Merge Assistant.
 
-You receive two inputs:
+You receive the following inputs:
 
 Original Prompt: an existing reusable prompt already stored in the user’s library.
 → Assume its structure, tone, and section order (e.g., Intent / Context / Instructions / Format / Verification) represent the established standard.
 
 New Prompt Draft: a recently generated prompt that may include updated phrasing, constraints, or examples derived from a specific task.
+
+Existing Tags / New Tags: arrays of keywords describing the task (may be empty). Merge them into a single, de-duplicated list while keeping meaningful nouns/adjectives and discarding generic verbs or filler.
+
+Existing Config / New Config: JSON objects that may contain 'intent_task_label' and 'intent_task_key'. Preserve or update these values so the merged prompt keeps the most descriptive task label and aligned slug.
 
 Your goal is to combine them into a single, improved, reusable prompt that remains universal for future use and preserves or strengthens specificity (especially numeric constraints).
 
@@ -83,13 +87,24 @@ Do not remove established, important sections or rules from the Original Prompt.
 
 Match the voice and tone of the Original Prompt (directive, structured, reusable).
 
-8) Output format (JSON only)
+8) Tag & Intent Label Merge
+
+- Combine the original and new tag arrays. Keep all meaningful nouns and domain-specific adjectives (e.g., "blog", "asset", "kit", "handoff"). Remove duplicates and generic helper words (create, make, please, write).
+- Preserve lowercase hyphenated formatting for tags.
+- Maintain or improve the task label: choose the most descriptive 'intent_task_label' and update 'intent_task_key' to its kebab-case form.
+
+9) Output format (JSON only)
 
 Return a JSON object:
 
 {
   "merged_prompt": "the full merged reusable prompt text",
-  "preview": "a short, natural-language summary following the Preview Rules below"
+  "preview": "a short, natural-language summary following the Preview Rules below",
+  "merged_tags": ["tag-a", "tag-b"],
+  "config": {
+    "intent_task_label": "Updated Task Label",
+    "intent_task_key": "updated-task-label"
+  }
 }
 
 
@@ -147,9 +162,21 @@ function buildUserPrompt(payload: {
   task_label: string;
   existing_prompt: string;
   new_prompt: string;
+  existing_tags: string[];
+  new_tags: string[];
+  existing_config: Record<string, unknown> | null;
+  new_config: Record<string, unknown> | null;
 }) {
   const lines = [
     `Task label: ${payload.task_label || "(unknown task)"}`,
+    "",
+    `Existing tags: ${payload.existing_tags.length ? payload.existing_tags.join(", ") : "(none)"}`,
+    `New tags: ${payload.new_tags.length ? payload.new_tags.join(", ") : "(none)"}`,
+    "",
+    `Existing config: ${
+      payload.existing_config ? JSON.stringify(payload.existing_config) : "{}"
+    }`,
+    `New config: ${payload.new_config ? JSON.stringify(payload.new_config) : "{}"}`,
     "",
     "Original Prompt (canonical structure):",
     payload.existing_prompt,
@@ -193,10 +220,33 @@ Deno.serve(async (req: Request) => {
   }
 
   const taskLabel = String(body?.task_label ?? "").trim();
+  const existingTags = Array.isArray(body?.existing_tags)
+    ? body.existing_tags
+        .map((tag: unknown) => String(tag ?? "").trim())
+        .filter(Boolean)
+    : [];
+  const newTags = Array.isArray(body?.new_tags)
+    ? body.new_tags
+        .map((tag: unknown) => String(tag ?? "").trim())
+        .filter(Boolean)
+    : [];
+  const existingConfig =
+    body?.existing_config && typeof body.existing_config === "object"
+      ? body.existing_config
+      : null;
+  const newConfig =
+    body?.new_config && typeof body.new_config === "object"
+      ? body.new_config
+      : null;
+
   const userPrompt = buildUserPrompt({
     task_label: taskLabel,
     existing_prompt: existingPrompt,
     new_prompt: newPrompt,
+    existing_tags: existingTags,
+    new_tags: newTags,
+    existing_config: existingConfig,
+    new_config: newConfig,
   });
 
   const completion = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -248,6 +298,15 @@ Deno.serve(async (req: Request) => {
     result?.merged_prompt ?? result?.merged_body ?? ""
   ).trim();
   const preview = normalizePreview(result?.preview);
+  const mergedTags = Array.isArray(result?.merged_tags)
+    ? result.merged_tags
+        .map((tag: unknown) => String(tag ?? "").trim())
+        .filter(Boolean)
+    : [];
+  const mergedConfig =
+    result?.config && typeof result.config === "object"
+      ? result.config
+      : null;
   if (!mergedPrompt || !preview) {
     return json(
       {
@@ -263,5 +322,7 @@ Deno.serve(async (req: Request) => {
     merged_prompt: mergedPrompt,
     merged_body: mergedPrompt,
     preview,
+    merged_tags: mergedTags,
+    config: mergedConfig || {},
   });
 });
