@@ -3,6 +3,10 @@
 
 import { ENH_CFG, LOG_PREFIX } from "./config.js";
 
+function shouldDebug() {
+  return typeof window !== "undefined" && Boolean(window.VG_INTENT_DEBUG);
+}
+
 const {
   INTENT,
   COMMAND_PHRASES,
@@ -242,7 +246,9 @@ export function extractSpans({
   }
 
   if (__DEV__()) {
+  if (shouldDebug()) {
     console.debug(`${LOG_PREFIX} spans`, unique);
+  }
   }
   return unique;
 }

@@ -3,7 +3,7 @@
   "name": "Viberly AI",
   "short_name": "Viberly AI",
   "version": "1.0.48",
-  "description": "Save and reuse your favorite prompts instantly inside Chrome, Firefox, and Safari.",
+  "description": "Viberly is an AI tool that learns how you work, auto-creates prompts, and predicts when to insert them instantly.",
   "icons": {
     "16": "assets/active-pill-16.png",
     "32": "assets/active-pill-32.png",

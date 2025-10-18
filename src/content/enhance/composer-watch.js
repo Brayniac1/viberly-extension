@@ -3,6 +3,10 @@
 
 import { COMPOSER_SELECTORS, LOG_PREFIX } from "./config.js";
 
+function shouldDebug() {
+  return typeof window !== "undefined" && Boolean(window.VG_INTENT_DEBUG);
+}
+
 function safeLower(value) {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
@@ -38,7 +42,9 @@ export function initComposerWatch({
     if (el === activeComposer) return;
     activeComposer = el;
     if (el) {
-      console.debug(`${LOG_PREFIX} composer detected`, el);
+      if (shouldDebug()) {
+        console.debug(`${LOG_PREFIX} composer detected`, el);
+      }
       onComposerFound(el);
     }
   }
@@ -52,7 +58,9 @@ export function initComposerWatch({
 
   function handleBlur(event) {
     if (event.target === activeComposer) {
-      console.debug(`${LOG_PREFIX} composer blur`, activeComposer);
+      if (shouldDebug()) {
+        console.debug(`${LOG_PREFIX} composer blur`, activeComposer);
+      }
       onComposerBlur(activeComposer);
       activeComposer = null;
     }
@@ -74,7 +82,9 @@ export function initComposerWatch({
     setActive(doc.activeElement);
   }
 
-  console.info(`${LOG_PREFIX} composer watcher initialized`);
+  if (shouldDebug()) {
+    console.info(`${LOG_PREFIX} composer watcher initialized`);
+  }
 
   function destroy() {
     doc.removeEventListener("focusin", handleFocus, true);

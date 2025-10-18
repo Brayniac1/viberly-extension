@@ -2420,10 +2420,14 @@
 
     let placed = false;
     if (stable >= __VG_STABLE_TICKS__) {
-      console.debug("[VG/HUD] commit anchor placement");
+      if (typeof window !== "undefined" && window.VG_INTENT_DEBUG) {
+        console.debug("[VG/HUD] commit anchor placement");
+      }
       placed = window.__VG_PLACE_HUD__IMPL__?.(placement) === true;
     } else {
-      console.debug("[VG/HUD] anchor not found → fixed bottom-right fallback");
+      if (typeof window !== "undefined" && window.VG_INTENT_DEBUG) {
+        console.debug("[VG/HUD] anchor not found → fixed bottom-right fallback");
+      }
       placed = __VG_PLACE_WINDOW_FIXED__(placement);
       if (placed) __vgEnsureDragShield__();
     }

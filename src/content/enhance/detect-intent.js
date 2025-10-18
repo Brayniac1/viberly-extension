@@ -2,6 +2,9 @@
 // Intent detection pipeline (intent-detection-core-spec v1.0 compliant).
 
 import { ENH_CFG, LOG_PREFIX } from "./config.js";
+
+const INTENT_DEBUG =
+  typeof window !== "undefined" && Boolean(window.VG_INTENT_DEBUG);
 import { INTENT_SCORING } from "./intent-scoring.js";
 
 const {
@@ -645,7 +648,7 @@ function emitTelemetry(event, payload) {
       {};
     if (typeof root.trackIntentEvent === "function") {
       root.trackIntentEvent(record);
-    } else {
+    } else if (INTENT_DEBUG) {
       console.debug(`${LOG_PREFIX} intent telemetry`, record);
     }
   } catch {
@@ -780,12 +783,14 @@ export function shouldTrigger({
     segments: telemetrySegments.slice(0, 4),
   });
 
-  console.debug(`${LOG_PREFIX} intent hit`, {
-    words: result.wordCount,
-    matched: result.matchedPhrase,
-    segments: matches.length,
-    score: bestAnalysis?.analysis?.score ?? 0,
-  });
+  if (INTENT_DEBUG) {
+    console.debug(`${LOG_PREFIX} intent hit`, {
+      words: result.wordCount,
+      matched: result.matchedPhrase,
+      segments: matches.length,
+      score: bestAnalysis?.analysis?.score ?? 0,
+    });
+  }
 
   return result;
 }

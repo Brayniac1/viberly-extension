@@ -4,8 +4,13 @@
 (() => {
   const VG = (window.__VG = window.__VG || {});
 
+  const INTERCEPT_DEBUG =
+    typeof window !== "undefined" && Boolean(window.VG_INTENT_DEBUG);
+
   if (window.__VG_DISABLE_SEND_INTERCEPT) {
-    console.log("[VG] intent intercept disabled");
+    if (INTERCEPT_DEBUG) {
+      console.debug("[VG] intent intercept disabled");
+    }
     return;
   }
 

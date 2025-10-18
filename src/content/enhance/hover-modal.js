@@ -47,7 +47,9 @@ export function mountHoverModal(doc = document) {
       )}px)`;
     }
     modal.hidden = false;
-    console.debug(`${LOG_PREFIX} hover modal open (stub)`);
+    if (typeof window !== "undefined" && window.VG_INTENT_DEBUG) {
+      console.debug(`${LOG_PREFIX} hover modal open (stub)`);
+    }
   }
 
   function close() {

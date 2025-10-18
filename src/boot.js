@@ -160,16 +160,18 @@
 
     // DEBUG: show the first rule the page received (merged or not)
     try {
-      const first = Array.isArray(rules) ? rules[0] : null;
-      console.debug("[CT][INIT_RULES]", {
-        host,
-        path,
-        count: rules?.length ?? 0,
-        first_dx: first?.dx,
-        first_dy: first?.dy,
-        first_corner: first?.anchor_corner,
-        first_strat: first?.pick_strategy || first?.strategy,
-      });
+      if (typeof window !== "undefined" && Boolean(window.VG_INTENT_DEBUG)) {
+        const first = Array.isArray(rules) ? rules[0] : null;
+        console.debug("[CT][INIT_RULES]", {
+          host,
+          path,
+          count: rules?.length ?? 0,
+          first_dx: first?.dx,
+          first_dy: first?.dy,
+          first_corner: first?.anchor_corner,
+          first_strat: first?.pick_strategy || first?.strategy,
+        });
+      }
     } catch {}
 
     const filtered = rules.filter((r) => {
@@ -219,12 +221,14 @@
     };
 
     // DEBUG: confirm what we’re about to place on first paint
-    console.debug("[CT][INIT_PICKED]", {
-      dx: window.__VG_DB_PLACEMENT.dx,
-      dy: window.__VG_DB_PLACEMENT.dy,
-      corner: window.__VG_DB_PLACEMENT.anchor_corner,
-      strat: window.__VG_DB_PLACEMENT.strategy,
-    });
+    if (typeof window !== "undefined" && Boolean(window.VG_INTENT_DEBUG)) {
+      console.debug("[CT][INIT_PICKED]", {
+        dx: window.__VG_DB_PLACEMENT.dx,
+        dy: window.__VG_DB_PLACEMENT.dy,
+        corner: window.__VG_DB_PLACEMENT.anchor_corner,
+        strat: window.__VG_DB_PLACEMENT.strategy,
+      });
+    }
 
     await ensureHudLoaded();
 
@@ -501,7 +505,9 @@
     // 3) Ensure Enhance underline skeleton is mounted (safe no-op if already active)
     try {
       await import(browser.runtime.getURL("src/content/enhance/index.js"));
-      console.debug("[VG] enhance underline ready (boot)");
+      if (typeof window !== "undefined" && window.VG_INTENT_DEBUG) {
+        console.debug("[VG] enhance underline ready (boot)");
+      }
     } catch (e) {
       console.error("[VG] enhance underline failed (boot)", e);
     }
@@ -509,7 +515,9 @@
     // 3.5) Ensure global send interceptors are active (key bindings + capture)
     try {
       await import(browser.runtime.getURL("src/interceptsend.js"));
-      console.debug("[VG] interceptsend ready (boot)");
+      if (typeof window !== "undefined" && window.VG_INTENT_DEBUG) {
+        console.debug("[VG] interceptsend ready (boot)");
+      }
     } catch (e) {
       console.error("[VG] interceptsend failed (boot)", e);
     }

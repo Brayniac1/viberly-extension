@@ -47,13 +47,15 @@ function emitHudIntentState(composer, state, active) {
   state.hudIntentActive = active;
   const id = getHudComposerId(composer);
   try {
-    console.log("[VG][intent] hudIntentActive", {
-      composerId: id,
-      active,
-      segments: Array.isArray(state.intentSegments)
-        ? state.intentSegments.length
-        : 0,
-    });
+    if (INTENT_DEBUG) {
+      console.debug("[VG][intent] hudIntentActive", {
+        composerId: id,
+        active,
+        segments: Array.isArray(state.intentSegments)
+          ? state.intentSegments.length
+          : 0,
+      });
+    }
   } catch {}
   try {
     window.postMessage(
@@ -364,7 +366,9 @@ function applyIntentToComposer({ composer, text, map, segments, state }) {
     tracker.cache.set(composer, record);
     tracker.last = record;
   } catch (err) {
-    console.debug(`${LOG_PREFIX} intent tracker update failed`, err);
+      if (INTENT_DEBUG) {
+        console.debug(`${LOG_PREFIX} intent tracker update failed`, err);
+      }
   }
 }
 
@@ -393,7 +397,9 @@ function updateComposerIntent(composer) {
       matchedText: snapshot.matchedText,
       matchedOffset: snapshot.matchedOffset,
     };
-    console.debug("[VG][intent] snapshot", state.intentDebug);
+      if (INTENT_DEBUG) {
+        console.debug("[VG][intent] snapshot", state.intentDebug);
+      }
   }
 
   refreshSuggestion({ composer, state, text })
@@ -401,7 +407,9 @@ function updateComposerIntent(composer) {
       updatePromptSuggestionUI(composer);
     })
     .catch((err) => {
-      console.debug(`${LOG_PREFIX} suggestion refresh failed`, err);
+      if (INTENT_DEBUG) {
+        console.debug(`${LOG_PREFIX} suggestion refresh failed`, err);
+      }
     });
 }
 
@@ -424,7 +432,9 @@ function ensureResizeObserver(composer) {
     ro.observe(composer);
     state.resizeObserver = ro;
   } catch (err) {
-    console.debug(`${LOG_PREFIX} resize observer failed`, err);
+    if (INTENT_DEBUG) {
+      console.debug(`${LOG_PREFIX} resize observer failed`, err);
+    }
   }
 }
 
@@ -476,7 +486,9 @@ function ensureMutationObserver(composer) {
     });
     state.mutationObserver = observer;
   } catch (err) {
-    console.debug(`${LOG_PREFIX} mutation observer failed`, err);
+    if (INTENT_DEBUG) {
+      console.debug(`${LOG_PREFIX} mutation observer failed`, err);
+    }
   }
 }
 
@@ -510,7 +522,9 @@ function schedulePostInputRefresh(composer, previousText) {
           runCheck(64);
         }
       } catch (err) {
-        console.debug(`${LOG_PREFIX} post-input refresh failed`, err);
+        if (INTENT_DEBUG) {
+          console.debug(`${LOG_PREFIX} post-input refresh failed`, err);
+        }
       }
     }, delay);
   };
@@ -520,7 +534,9 @@ function schedulePostInputRefresh(composer, previousText) {
 
 (function initEnhanceSkeleton() {
   if (window[ENH_ROOT_FLAG]) {
-    console.info(`${LOG_PREFIX} already active`);
+    if (INTENT_DEBUG) {
+      console.info(`${LOG_PREFIX} already active`);
+    }
     return;
   }
   window[ENH_ROOT_FLAG] = true;
@@ -632,17 +648,21 @@ function schedulePostInputRefresh(composer, previousText) {
       const state = getComposerState(composer);
       const modalActive = isModalActiveForComposer(composer);
       if (INTENT_DEBUG) {
+      if (INTENT_DEBUG) {
         console.log("[VG][modal] composer blur", {
           composer,
           modalActive,
           activeElement: document.activeElement,
         });
       }
+      }
       if (modalActive) {
+        if (INTENT_DEBUG) {
         if (INTENT_DEBUG) {
           console.log(
             "[VG][modal] composer blur suppressed due to active modal"
           );
+        }
         }
         return;
       }
@@ -668,12 +688,16 @@ function schedulePostInputRefresh(composer, previousText) {
     }
     updateComposerIntent(composer);
     if (typeof window.vgEnhanceComposerAll === "function") {
-      console.debug(`${LOG_PREFIX} invoking vgEnhanceComposerAll() from stub`);
+      if (INTENT_DEBUG) {
+        console.debug(`${LOG_PREFIX} invoking vgEnhanceComposerAll() from stub`);
+      }
       window.vgEnhanceComposerAll();
     } else {
-      console.info(
-        `${LOG_PREFIX} vgEnhanceComposerAll() unavailable; stub open only`
-      );
+      if (INTENT_DEBUG) {
+        console.info(
+          `${LOG_PREFIX} vgEnhanceComposerAll() unavailable; stub open only`
+        );
+      }
     }
   }
 
@@ -692,7 +716,9 @@ function schedulePostInputRefresh(composer, previousText) {
       clearComposerState(active);
     }
     delete window[ENH_ROOT_FLAG];
-    console.info(`${LOG_PREFIX} skeleton torn down`);
+    if (INTENT_DEBUG) {
+      console.info(`${LOG_PREFIX} skeleton torn down`);
+    }
   }
 
   const devtools = {

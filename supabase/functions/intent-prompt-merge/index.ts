@@ -40,28 +40,26 @@ Existing Config / New Config: JSON objects that may contain 'intent_task_label' 
 
 Your goal is to combine them into a single, improved, reusable prompt that remains universal for future use and preserves or strengthens specificity (especially numeric constraints).
 
+------------------------------
 Merge Rules
-1) Preserve structure
+------------------------------
 
+1) Preserve structure
 Keep the Original Prompt’s structure, headings, and flow. Integrate improvements within that structure—do not replace it.
 
 2) Extract general improvements (reusability-first)
-
 If the New Prompt Draft adds clearer wording, better guardrails, steps, tone guidance, formatting, or QA checks, integrate those improvements.
 
 3) Avoid one-time topical content
-
 If the New Prompt Draft includes situational or instance-specific details (topics, client/brand names, one-off product references, dated requests), treat them as examples and do not bake them into the final reusable template.
 Example: Turn “compare AI Prompts vs AI Profiles” into a generic “write a blog article,” unless the Original already codifies that comparison as a reusable pattern.
 
 4) Numeric & Parametric Specificity Policy (CRITICAL)
-
 Your highest priority is to retain or increase actionable specificity across versions—never dilute it.
 
 What counts as “specifics”: numbers or explicit parameters such as word counts, character limits, time limits, steps, percentages, quantities, file counts, budgets/currency, ranges (min/max), model/temperature settings, limits like “no more than X,” “between A–B,” etc.
 
 Precedence rules:
-
 Only one prompt has a specific → Keep it.
 (Original specific + New generic → keep Original specific; Original generic + New specific → keep New specific.)
 
@@ -76,24 +74,22 @@ Conflicts: If two specifics genuinely conflict (e.g., “≤700 words” vs “�
 Never generalize specifics: Do not replace concrete numbers with vague language (“short,” “brief,” “around X”). Keep exact values.
 
 5) Resolve overlap (non-numeric)
-
 When both prompts express similar non-numeric guidance, keep the clearest / most precise / most restrictive version and remove redundancy.
 
 6) Preserve completeness
-
 Do not remove established, important sections or rules from the Original Prompt. Add or refine—do not simplify away key instructions.
 
 7) Maintain tone and professionalism
-
 Match the voice and tone of the Original Prompt (directive, structured, reusable).
 
 8) Tag & Intent Label Merge
-
 - Combine the original and new tag arrays. Keep all meaningful nouns and domain-specific adjectives (e.g., "blog", "asset", "kit", "handoff"). Remove duplicates and generic helper words (create, make, please, write).
 - Preserve lowercase hyphenated formatting for tags.
 - Maintain or improve the task label: choose the most descriptive 'intent_task_label' and update 'intent_task_key' to its kebab-case form.
 
-9) Output format (JSON only)
+------------------------------
+Output format (JSON only)
+------------------------------
 
 Return a JSON object:
 
@@ -107,55 +103,88 @@ Return a JSON object:
   }
 }
 
-
 No markdown, no commentary, no code fences.
 
+------------------------------
 Preview Generation Rules
+------------------------------
 
 Create a concise, natural-language preview that summarizes the purpose of the merged prompt.
 
 Goal:
-Provide a short, action-oriented sentence that reads naturally as a predictive suggestion or completion for the user.
+Provide a short, verb-first sentence (80–100 characters) that feels like a helpful, predictive continuation of the user’s intent — the kind of ghost text Viberly would display while someone types.
 
-Rules:
+Tone & Format:
+- Action-oriented, concise, specific.
+- Plain text only (no markdown or quotes).
+- It should make sense mid-sentence.
+- Avoid meta phrasing like “This prompt helps you…”
 
-Length: 80–100 characters (max 100).
+Verb Selection (Work Domain Taxonomy):
 
-Tone: Action-oriented, clear, specific — no filler/meta.
+Creative / Content Work:
+- Write — for text, blogs, captions, or copy.
+- Create — for assets, templates, or deliverables.
+- Design — for visuals, layouts, or UI.
+- Develop — for plans, outlines, or structured documents.
+- Compose — for professional writing (emails, posts, scripts).
 
-Verb-first style — choose based on dominant function:
+Analytical / Technical Work:
+- Analyze — for data, insights, or performance.
+- Audit — for checking, validating, or diagnosing.
+- Optimize — for improving output or process efficiency.
+- Configure — for setup or system tuning.
+- Validate — for confirming accuracy or logic.
 
-Policy / restriction → “Prevent …”
+Process / Workflow Management:
+- Facilitate — for transitions, handoffs, or collaboration.
+- Organize — for structuring assets, tasks, or timelines.
+- Streamline — for simplifying or improving workflows.
+- Automate — for systemized or recurring tasks.
+- Schedule — for planning or sequencing work.
 
-Writing / content → “Write …”
+Communication / Collaboration:
+- Draft — for emails, messages, or proposals.
+- Coordinate — for cross-functional or team-based actions.
+- Respond — for replies or follow-ups.
+- Clarify — for refinement or resolving ambiguity.
+- Summarize / Explain — for clarity and synthesis.
 
-Design / creative → “Design …”
+Governance / Control:
+- Prevent — for restrictions, rules, or safeguards.
+- Ensure — for enforcing standards or quality.
+- Monitor — for tracking or ongoing oversight.
+- Enforce — for compliance or consistency.
+- Approve / Review — for validation or signoff.
 
-Analysis / logic → “Analyze …”
+Strategic / Decision Work:
+- Plan — for outlining strategy or next steps.
+- Prioritize — for task ranking or focus.
+- Assess — for evaluating options or results.
+- Recommend — for actionable suggestions.
+- Define — for establishing standards or roles.
 
-Summary / explanation → “Summarize …” / “Explain …”
+If no clear context: default to → Create → Write → Facilitate → Explain (in that order).
 
-Generation / creation → “Create …”
+Meaning over mirroring:
+Infer the intent — do not copy the first sentence. The preview should express what the merged prompt *does*, not how it is worded.
 
-Otherwise choose from: Create, Write, Design, Summarize, Explain, Develop, Prevent.
-
-Meaning over mirroring: infer the prompt’s goal — don’t copy the first line.
-
-Standalone: must make sense mid-sentence.
-
-Specificity: mention deliverables when possible (“blog asset kit”, “API rule set”, “reels script”).
-
-Plain text only (no quotes/markdown).
+Specificity:
+Include clear deliverables when relevant (“handoff kit”, “API workflow”, “summary brief”).
 
 Examples:
+"Facilitate a smooth project handoff by preparing the final summary and sharing key updates."
+"Organize campaign assets and timelines for a more efficient marketing workflow."
+"Write engaging marketing copy with clear hooks and strong calls to action."
+"Design a branded presentation deck with consistent visuals and typography."
+"Prevent unauthorized edits to API configurations or production data."
+"Analyze campaign metrics to identify opportunities for optimization."
+"Plan the next sprint deliverables and assign owners for each milestone."
+"Clarify client feedback into structured action items for the design team."
+"Streamline onboarding workflows by consolidating repetitive setup tasks."
 
-Create a blog asset kit: title, meta, intro, visuals, checklist, and social copy.
-
-Prevent edits or interference with APIs connected to the language model.
-
-Write engaging marketing copy with clear hooks and strong calls to action.
-
-Design an About Us section that feels warm, credible, and on-brand.
+Validation:
+If the preview does not begin with one of the approved verbs or exceeds 100 characters, regenerate it once using the Preview Generation Rules.
 `.trim();
 
 function buildUserPrompt(payload: {
