@@ -1,11 +1,14 @@
 // src/ui/quickmenu.js
 (() => {
   // make APP/Z/MENU_DX available if the big script defined them, else safe defaults
-  const { APP, Z, MENU_DX } = window.__VG_CONSTS || {
+ const CONSTS = window.__VG_CONSTS || {
     APP: "vibeguardian",
-    Z: 2147483600,
     MENU_DX: 0,
   };
+  const APP = CONSTS.APP || "vibeguardian";
+  const MENU_DX = CONSTS.MENU_DX || 0;
+  const Z = 2147483602;
+  const ModalBus = window.__vg_modal_channel__;
 
   /* ===============================
      Phase 0 — Feature flag + messages
@@ -1891,7 +1894,7 @@
       color: "#cbd5e1",
       background: "#0f1116",
       borderBottom: "1px solid #22232b",
-      zIndex: 3,
+      zIndex: String(Z + 3),
       boxShadow: "0 6px 12px rgba(0,0,0,.25)",
       pointerEvents: "none",
     });
@@ -2174,7 +2177,7 @@
         borderRadius: "8px",
         boxShadow: "0 10px 30px rgba(0,0,0,.5)",
         pointerEvents: "none",
-        zIndex: 10,
+        zIndex: String(Z + 10),
         whiteSpace: "nowrap",
         opacity: "0",
         transform: "translateY(-4px)",
@@ -2253,7 +2256,7 @@
       width: "0px", // will be set to scrollbar width dynamically
       background: "#0f1116",
       borderBottom: "1px solid #22232b",
-      zIndex: 4,
+      zIndex: String(Z + 4),
       pointerEvents: "none",
     });
 
@@ -2315,8 +2318,8 @@
     `;
 
     // Ensure header sits above everything else
-    header.style.zIndex = "7";
-    scrollbarCover.style.zIndex = "7";
+    header.style.zIndex = String(Z + 7);
+    scrollbarCover.style.zIndex = String(Z + 7);
 
     // And keep the scroller content from peeking above:
     scroller.style.background = "#0f1116";
@@ -3428,11 +3431,25 @@
       try {
         delete window.__VG_QM_CLOSE;
       } catch {}
+      try {
+        ModalBus?.publish?.({ type: "close", id: "quickmenu_modal" });
+      } catch {}
     };
 
     // export the real closer for toggle & other callers
     try {
       window.__VG_QM_CLOSE = closeMenu;
+      ModalBus?.publish?.({ type: "open", id: "quickmenu_modal" });
+    } catch {}
+
+    try {
+      ModalBus?.subscribe?.((event) => {
+        if (!event) return;
+        if (event.id === "quickmenu_modal") return;
+        if (event.type === "open") {
+          closeMenu();
+        }
+      });
     } catch {}
 
     const eventInsideWrap = (ev) => {

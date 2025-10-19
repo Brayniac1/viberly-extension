@@ -2,9 +2,19 @@
 // Renders floating markers above action/recipient/topic spans.
 
 import { sendRuntimeMessage } from "./runtime.js";
+import {
+  publishModalEvent,
+  subscribeToModalChannel,
+  MODAL_IDS,
+} from "./modal-channel.js";
 
 const MARKER_HOST_ID = "__vib_marker_host__";
 const MODAL_HOST_ID = "__vib_marker_modal_host__";
+const Z_STACK = {
+  overlayHost: 2147483598,
+  modalHost: 2147483606,
+  modal: 2147483607,
+};
 const MARKER_CLASS = "vib-marker-dot";
 const UNDERLINE_CLASS = "vib-marker-underline";
 const WRAPPER_CLASS = "vib-marker-hit";
@@ -24,6 +34,27 @@ const modalDebugState = {
   wheelTimer: false,
   lastEvent: null,
 };
+
+async function openPaywall(reason = "limit", source = "marker") {
+  try {
+    if (window.__VG_OPEN_PAYWALL__ && typeof window.__VG_OPEN_PAYWALL__ === "function") {
+      window.__VG_OPEN_PAYWALL__(reason, source);
+      return true;
+    }
+  } catch {}
+  try {
+    const mod = await import(browser.runtime.getURL("src/ui/paywall.js"));
+    if (mod?.default?.show) {
+      mod.default.show({ reason, source });
+      return true;
+    }
+    if (window.VGPaywall?.show) {
+      window.VGPaywall.show({ reason, source });
+      return true;
+    }
+  } catch {}
+  return false;
+}
 
 function debugModal(...args) {
   if (!DEBUG_MODAL) return;
@@ -50,6 +81,8 @@ let enhanceJobSeq = 0;
 const hoverUnlockTimers = new WeakMap();
 const hoverIntentTimers = new WeakMap();
 const HOVER_INTENT_DELAY_MS = 200;
+let unsubscribeModalBus = null;
+let suppressModalBroadcast = false;
 
 function updateComposerMeta(composer, patch = {}) {
   if (!composer) return null;
@@ -86,12 +119,32 @@ function ensureHost(doc = document) {
       width: "0",
       height: "0",
       pointerEvents: "auto",
-      zIndex: "2147483602",
+      zIndex: String(Z_STACK.overlayHost),
     });
     doc.body.appendChild(host);
   }
   return host;
 }
+
+function ensureModalBus() {
+  if (unsubscribeModalBus) return;
+  unsubscribeModalBus = subscribeToModalChannel((event) => {
+    if (!event) return;
+    if (event.type === "close" && event.id === MODAL_IDS.markers) {
+      suppressModalBroadcast = true;
+      hideSuggestionModal(true);
+      suppressModalBroadcast = false;
+      return;
+    }
+    if (event.type === "open" && event.id !== MODAL_IDS.markers) {
+      suppressModalBroadcast = true;
+      hideSuggestionModal(true);
+      suppressModalBroadcast = false;
+    }
+  });
+}
+
+ensureModalBus();
 
 function ensureModalHost(doc = document) {
   let host = doc.getElementById(MODAL_HOST_ID);
@@ -105,7 +158,7 @@ function ensureModalHost(doc = document) {
       width: "0",
       height: "0",
       pointerEvents: "auto",
-      zIndex: "2147483603",
+      zIndex: String(Z_STACK.modalHost),
     });
     doc.body.appendChild(host);
   }
@@ -182,7 +235,7 @@ function ensureStyles(doc = document) {
       color: #f4f4f7;
       font-size: 13px;
       line-height: 1.55;
-      z-index: 2147483604;
+      z-index: ${Z_STACK.modal};
       backdrop-filter: blur(16px);
     }
     .${MODAL_CLASS}.hidden{
@@ -832,6 +885,7 @@ function formatEnhancedToHTML(enhanced) {
 }
 
 function showSuggestionModal(composer, targetEl) {
+  ensureModalBus();
   if (hideModalTimer) {
     clearTimeout(hideModalTimer);
     hideModalTimer = null;
@@ -845,6 +899,7 @@ function showSuggestionModal(composer, targetEl) {
   if (!meta || !meta.text) return;
   const { doc, score, text } = meta;
   const modalHost = ensureModalHost(doc);
+
 
   let modal = modalHost.querySelector(`.${MODAL_CLASS}`);
   if (!modal) {
@@ -964,6 +1019,10 @@ function showSuggestionModal(composer, targetEl) {
     locks: modalLocks.size,
     pointerDown: modalPointerDown,
   });
+
+  if (!suppressModalBroadcast) {
+    publishModalEvent({ type: "open", id: MODAL_IDS.markers });
+  }
 }
 
 function lockModal(source) {
@@ -1065,6 +1124,9 @@ function hideSuggestionModal(immediate = false) {
     }, 160);
   }
   activeModal = null;
+  if (!suppressModalBroadcast) {
+    publishModalEvent({ type: "close", id: MODAL_IDS.markers });
+  }
 }
 
 function buildModalContent(meta = {}) {
@@ -1217,10 +1279,19 @@ function startEnhanceFlow(composer, doc) {
     const current = composerMeta.get(composer);
     if (!current || current.jobId !== jobId) return;
     if (!resp || !resp.ok || !resp.text) {
-      let message = resp?.error || "Enhance failed. Try again.";
       if (resp?.error === "AI_ENHANCE_LIMIT") {
-        message = "You’ve hit your Enhance limit. Upgrade to keep using this feature.";
+        updateComposerMeta(composer, {
+          status: "idle",
+          error: null,
+          enhancedText: null,
+          enhancedTextRaw: null,
+          jobId: 0,
+        });
+        openPaywall("ai_enhance_limit", "markers_modal");
+        hideSuggestionModal(true);
+        return;
       }
+      const message = resp?.error || "Enhance failed. Try again.";
       updateComposerMeta(composer, {
         status: "error",
         error: message,
@@ -1242,10 +1313,19 @@ function startEnhanceFlow(composer, doc) {
   }).catch((err) => {
     const current = composerMeta.get(composer);
     if (!current || current.jobId !== jobId) return;
-    let message = err?.message || "Enhance failed. Try again.";
     if (String(err?.message || "").toUpperCase() === "AI_ENHANCE_LIMIT") {
-      message = "You’ve hit your Enhance limit. Upgrade to keep using this feature.";
+      updateComposerMeta(composer, {
+        status: "idle",
+        error: null,
+        enhancedText: null,
+        enhancedTextRaw: null,
+        jobId: 0,
+      });
+      openPaywall("ai_enhance_limit", "markers_modal");
+      hideSuggestionModal(true);
+      return;
     }
+    const message = err?.message || "Enhance failed. Try again.";
     updateComposerMeta(composer, {
       status: "error",
       error: message,

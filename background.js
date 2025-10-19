@@ -119,6 +119,46 @@ function normalizeForSimilarity(text) {
     .trim();
 }
 
+const AI_ENHANCE_PLAN_LIMITS = {
+  free: { total: 5, month: null },
+  basic: { total: null, month: 5 },
+  pro: { total: null, month: null },
+  default: { total: 5, month: null },
+};
+
+function __triggerAiEnhancePaywall(tabId, meta) {
+  try {
+    const payload = {
+      reason: "ai_enhance_limit",
+      tier: meta?.tier || null,
+      total_used: meta?.total_used ?? null,
+      month_used: meta?.month_used ?? null,
+      month_reset: meta?.month_reset ?? null,
+    };
+    if (tabId) {
+      browser.tabs
+        .sendMessage(tabId, {
+          type: "VG_PAYWALL_SHOW",
+          payload,
+        })
+        .catch(() => void browser.runtime.lastError);
+    } else {
+      browser.tabs
+        .query({ active: true, currentWindow: true })
+        .then(([tab]) => {
+          if (!tab?.id) return;
+          browser.tabs
+            .sendMessage(tab.id, {
+              type: "VG_PAYWALL_SHOW",
+              payload,
+            })
+            .catch(() => void browser.runtime.lastError);
+        })
+        .catch(() => void browser.runtime.lastError);
+    }
+  } catch {}
+}
+
 function tokenize(text) {
   return normalizeForSimilarity(text)
     .split(" ")
@@ -832,7 +872,16 @@ async function __vgGetSessionMaybeWait(host) {
 
 // ---------- SoT-based account summary (BG reads with its token) ----------
 async function __bgAccountSummary() {
-  const out = { tier: "free", used: 0, quick: 0, limit: 1, status: "inactive" };
+  const out = {
+    tier: "free",
+    used: 0,
+    quick: 0,
+    limit: 1,
+    status: "inactive",
+    aiEnhanceTotal: 0,
+    aiEnhanceMonth: 0,
+    aiEnhanceMonthReset: null,
+  };
   try {
     const {
       data: { session },
@@ -844,7 +893,7 @@ async function __bgAccountSummary() {
     const prof = await client
       .from("vg_profiles")
       .select(
-        "tier, custom_guards_count, quick_adds_count, subscription_status"
+        "tier, custom_guards_count, quick_adds_count, subscription_status, ai_enhance_total_used, ai_enhance_month_used, ai_enhance_month_reset"
       )
       .eq("user_id", uid)
       .single();
@@ -857,11 +906,28 @@ async function __bgAccountSummary() {
       ? prof.data.quick_adds_count
       : 0;
     const status = prof?.data?.subscription_status || "inactive";
+    const aiEnhanceTotal = Number.isFinite(prof?.data?.ai_enhance_total_used)
+      ? prof.data.ai_enhance_total_used
+      : 0;
+    const aiEnhanceMonth = Number.isFinite(prof?.data?.ai_enhance_month_used)
+      ? prof.data.ai_enhance_month_used
+      : 0;
+    const aiEnhanceMonthReset =
+      prof?.data?.ai_enhance_month_reset || null;
 
     const PLAN_LIMITS = { free: 1, basic: 3, pro: Infinity };
     const limit = PLAN_LIMITS[tier] ?? 1;
 
-    return { tier, used, quick, limit, status };
+    return {
+      tier,
+      used,
+      quick,
+      limit,
+      status,
+      aiEnhanceTotal,
+      aiEnhanceMonth,
+      aiEnhanceMonthReset,
+    };
   } catch (e) {
     return { ...out, error: String(e?.message || e) };
   }
@@ -2664,6 +2730,45 @@ async function handleMessage(msg, _host = "", sender = null) {
         } = await client.auth.getSession();
         if (!session?.user?.id) return { ok: false, error: "NOT_SIGNED_IN" };
 
+        const summary = await __bgAccountSummary();
+        const tier = String(summary?.tier || "free").toLowerCase();
+        const limits =
+          AI_ENHANCE_PLAN_LIMITS[tier] || AI_ENHANCE_PLAN_LIMITS.default;
+
+        const totalUsed = Number(summary?.aiEnhanceTotal || 0);
+        let monthUsed = Number(summary?.aiEnhanceMonth || 0);
+        let resetTime = 0;
+        if (summary?.aiEnhanceMonthReset) {
+          const ts = Date.parse(summary.aiEnhanceMonthReset);
+          if (Number.isFinite(ts)) resetTime = ts;
+        }
+        const nowTs = Date.now();
+        if (!resetTime || resetTime <= nowTs) {
+          monthUsed = 0;
+          resetTime = 0;
+        }
+
+        const limitMeta = {
+          tier,
+          total_used: totalUsed,
+          month_used: monthUsed,
+          month_reset: resetTime ? new Date(resetTime).toISOString() : null,
+        };
+
+        if (limits.total !== null && totalUsed >= limits.total) {
+          __triggerAiEnhancePaywall(sender?.tab?.id, limitMeta);
+          return { ok: false, error: "AI_ENHANCE_LIMIT", meta: limitMeta };
+        }
+
+        if (
+          limits.month !== null &&
+          resetTime > nowTs &&
+          monthUsed >= limits.month
+        ) {
+          __triggerAiEnhancePaywall(sender?.tab?.id, limitMeta);
+          return { ok: false, error: "AI_ENHANCE_LIMIT", meta: limitMeta };
+        }
+
         // Basic guards (mirror content script limits)
         const text = raw.trim();
         if (text.length < 16) return { ok: false, error: "TEXT_TOO_SHORT" };
@@ -2689,23 +2794,12 @@ async function handleMessage(msg, _host = "", sender = null) {
           e?.details?.error === "AI_ENHANCE_LIMIT" ||
           String(e?.message || "").toUpperCase() === "AI_ENHANCE_LIMIT";
         if (limitHit) {
-          try {
-            const tabId = sender?.tab?.id;
-            if (tabId) {
-              browser.tabs
-                .sendMessage(tabId, {
-                  type: "VG_PAYWALL_SHOW",
-                  payload: {
-                    reason: "ai_enhance_limit",
-                    tier: e?.details?.tier || null,
-                    total_used: e?.details?.total_used ?? null,
-                    month_used: e?.details?.month_used ?? null,
-                    month_reset: e?.details?.month_reset ?? null,
-                  },
-                })
-                .catch(() => void browser.runtime.lastError);
-            }
-          } catch {}
+          __triggerAiEnhancePaywall(sender?.tab?.id, {
+            tier: e?.details?.tier || null,
+            total_used: e?.details?.total_used ?? null,
+            month_used: e?.details?.month_used ?? null,
+            month_reset: e?.details?.month_reset ?? null,
+          });
           return {
             ok: false,
             error: "AI_ENHANCE_LIMIT",

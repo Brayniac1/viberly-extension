@@ -616,10 +616,19 @@
     pillStopEnhancing();
 
     if (!resp || !resp.ok || !resp.text) {
-      let message = resp?.error || "Enhance failed.";
       if (resp?.error === "AI_ENHANCE_LIMIT") {
-        message = "You’ve hit your Enhance limit. Upgrade to keep using this feature.";
+        try {
+          if (window.__VG_OPEN_PAYWALL__) {
+            window.__VG_OPEN_PAYWALL__("ai_enhance_limit", "markers_pill");
+          } else {
+            const mod = await import(browser.runtime.getURL("src/ui/paywall.js"));
+            mod?.default?.show?.({ reason: "ai_enhance_limit", source: "markers_pill" });
+          }
+        } catch {}
+        hidePill();
+        return;
       }
+      const message = resp?.error || "Enhance failed.";
       toast(message, 1600);
       hidePill();
       return;

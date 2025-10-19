@@ -62,14 +62,22 @@ const FEATURES = {
   basic: {
     title: "Basic",
     price: "$4.99/mo",
-    bullets: ["Up to 3 Custom Prompts", "Up to 3 Quick Adds"],
+    bullets: [
+      "Up to 3 Custom Prompts",
+      "Up to 3 Quick Adds",
+      "5 Enhance Prompts / mo",
+    ],
     footnote: "Cancel anytime.",
   },
   pro: {
     title: "Pro",
     price: "$9.99/mo",
     popular: true,
-    bullets: ["Unlimited Custom Prompts", "Unlimited Quick Adds"],
+    bullets: [
+      "Unlimited Custom Prompts",
+      "Unlimited Quick Adds",
+      "Unlimited Enhance Prompts",
+    ],
     footnote: "Best for active builders.",
   },
 };
@@ -149,6 +157,9 @@ async function resolvePlanAndUsage(opts = {}) {
     used = 0,
     quick = 0,
     limit = 1;
+  
+  let enhanceMonth = 0;
+  let enhanceResetISO = null;
 
   try {
     const resp = await new Promise((res) => {
@@ -168,6 +179,13 @@ async function resolvePlanAndUsage(opts = {}) {
         resp.summary.limit === Infinity
           ? Infinity
           : Number(resp.summary.limit || 1);
+      const monthVal =
+        resp.summary.ai_enhance_month ?? resp.summary.aiEnhanceMonth ?? 0;
+      enhanceMonth = Number(monthVal);
+      enhanceResetISO =
+        resp.summary.ai_enhance_month_reset ??
+        resp.summary.aiEnhanceMonthReset ??
+        null;
     }
   } catch (e) {
     console.warn("[VG][paywall] BG summary fetch failed", e);
@@ -176,7 +194,15 @@ async function resolvePlanAndUsage(opts = {}) {
   // Respect explicit tier override if provided
   if (!tier) tier = normTier(opts.tier || "free");
 
-  return { tier, used, quick, limit, reason };
+  return {
+    tier,
+    used,
+    quick,
+    limit,
+    reason,
+    enhanceMonth,
+    enhanceResetISO,
+  };
 }
 
 // ---------- Plain-DOM fallback (usage always shown as limit/limit) ----------
@@ -185,19 +211,35 @@ async function showPlainFallback(opts = {}) {
     console.warn("[VG][paywall] using plain-DOM fallback");
     document.getElementById("vg-paywall-fallback")?.remove();
 
-    const { tier, used, quick, limit, reason } = await resolvePlanAndUsage(
+    const {
+      tier,
+      used,
+      quick,
+      limit,
+      reason,
+      enhanceMonth,
+      enhanceResetISO,
+    } = await resolvePlanAndUsage(
       opts
     );
     const isCG = isCGReason(reason);
 
     const titleHTML = isCG
       ? "You’ve hit your Custom Prompts limit"
+      : isEnhance
+      ? "You’ve hit your Enhance limit"
       : "You’ve hit your Quick Adds limit";
 
     const noteHTML = isCG
       ? `Your current plan <b>${
           tier.charAt(0).toUpperCase() + tier.slice(1)
         }</b> allows up to <b>${prettyLimit(limit)}</b> unique custom prompts.`
+      : isEnhance
+      ? `Your current plan <b>${
+          tier.charAt(0).toUpperCase() + tier.slice(1)
+        }</b> allows <b>${
+          tier === "basic" ? "5 Enhance Prompts / mo" : "Unlimited Enhance Prompts"
+        }</b>.`
       : `Your current plan <b>${
           tier.charAt(0).toUpperCase() + tier.slice(1)
         }</b> allows up to <b>${prettyLimit(limit)}</b> unique quick adds.`;
@@ -244,9 +286,14 @@ async function showPlainFallback(opts = {}) {
     note.style.cssText =
       "border:1px solid #2a2a33;border-radius:10px;background:#0c0e13;padding:10px 12px";
     const usedVal = isCG ? opts.used ?? 0 : opts.quick ?? 0;
+    const usageText = isEnhance
+      ? `Usage: ${enhanceMonth} / ${tier === "basic" ? "5" : "∞"}`
+      : isCG
+      ? `Usage: ${used} / ${prettyLimit(limit)}`
+      : `Usage: ${quick} / ${prettyLimit(limit)}`;
     note.appendChild(
       el("div", {
-        text: `Usage: ${prettyLimit(usedVal)} / ${prettyLimit(limit)}`,
+        text: usageText,
         style: "color:#a1a1aa",
       })
     );
@@ -326,19 +373,39 @@ async function showPlainFallback(opts = {}) {
 export async function show(opts = {}) {
   try {
 
-    const { tier, used, quick, limit, reason } = await resolvePlanAndUsage(
+    const {
+      tier,
+      used,
+      quick,
+      limit,
+      reason,
+      enhanceMonth,
+      enhanceResetISO,
+    } = await resolvePlanAndUsage(
       opts
     );
     const isCG = isCGReason(reason);
+    const isEnhance = reason === "ai_enhance_limit";
 
     const titleHTML = isCG
       ? "You’ve hit your Custom Prompts limit"
+      : isEnhance
+      ? "You’ve hit your Enhance limit"
       : "You’ve hit your Quick Adds limit";
+
+    const enhanceLimitLabel = tier === "basic" ? "5 Enhance Prompts / mo" : "Unlimited Enhance Prompts";
+    const enhanceResetText = enhanceResetISO
+      ? ` Your monthly counter resets on <b>${new Date(enhanceResetISO).toLocaleDateString()}</b>.`
+      : "";
 
     const noteHTML = isCG
       ? `Your current plan <b>${
           tier.charAt(0).toUpperCase() + tier.slice(1)
         }</b> allows up to <b>${prettyLimit(limit)}</b> unique custom prompts.`
+      : isEnhance
+      ? `Your current plan <b>${
+          tier.charAt(0).toUpperCase() + tier.slice(1)
+        }</b> includes <b>${enhanceLimitLabel}</b>.${enhanceResetText}`
       : `Your current plan <b>${
           tier.charAt(0).toUpperCase() + tier.slice(1)
         }</b> allows up to <b>${prettyLimit(limit)}</b> unique quick adds.`;
@@ -424,11 +491,15 @@ export async function show(opts = {}) {
     body.appendChild(el("div", { class: "muted", html: noteHTML }));
 
     const note = el("div", { class: "note" });
-    const usedVal = isCG ? used : quick;
+    const usageText = isEnhance
+      ? `Usage: ${enhanceMonth} / ${tier === "basic" ? 5 : "∞"}`
+      : isCG
+      ? `Usage: ${used} / ${prettyLimit(limit)}`
+      : `Usage: ${quick} / ${prettyLimit(limit)}`;
     note.appendChild(
       el("div", {
         class: "muted",
-        text: `Usage: ${prettyLimit(usedVal)} / ${prettyLimit(limit)}`,
+        text: usageText,
       })
     );
 

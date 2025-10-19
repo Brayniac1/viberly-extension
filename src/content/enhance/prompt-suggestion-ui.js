@@ -12,6 +12,11 @@ import {
   markSuggestionAccepted,
   markSuggestionDismissed,
 } from "./suggestion-engine.js";
+import {
+  publishModalEvent,
+  subscribeToModalChannel,
+  MODAL_IDS,
+} from "./modal-channel.js";
 const OVERLAY_CLASS = "vg-prompt-suggestion";
 const OVERLAY_ID_PREFIX = "__vg_prompt_suggestion__";
 const MIRROR_ID = "__vib_marker_mirror__";
@@ -19,13 +24,20 @@ const HIDE_AFTER_DISMISS_MS = 2000;
 const MAX_INLINE_WORDS = 4;
 const TOOLTIP_DELAY_MS = 150;
 const MARKER_MODAL_CLASS = "vib-marker-modal";
+const Z_STACK = {
+  ghost: 2147483599,
+  tooltip: 2147483606,
+};
 
 const overlayMap = new WeakMap();
 const tooltipMap = new WeakMap();
+const composersWithOverlay = new Set();
 const PROMPT_TOOLTIP_DEBUG =
   typeof window !== "undefined" && Boolean(window.VG_DEBUG_PROMPT_TOOLTIP);
 
 const SENTENCE_PUNCTUATION_RE = /[.!?;,:]/;
+let unsubscribeModalBus = null;
+let suppressSuggestionBroadcast = false;
 
 function getCaretOffsetInComposer(composer) {
   if (!composer) return -1;
@@ -403,6 +415,11 @@ function hideActiveTooltip() {
     if (data) {
       clearHideTimer(data);
       data.lockDepth = 0;
+      if (data.el) {
+        const prev = data.el.dataset.prevPointerEvents ?? "";
+        data.el.style.pointerEvents = prev;
+        delete data.el.dataset.prevPointerEvents;
+      }
     }
   }
   if (doc) {
@@ -567,7 +584,7 @@ function ensureTooltip(doc) {
   tooltip.style.position = "fixed";
   tooltip.style.opacity = "0";
   tooltip.style.pointerEvents = "none";
-  tooltip.style.zIndex = "2147483605";
+  tooltip.style.zIndex = String(Z_STACK.tooltip);
 
   const headerEl = doc.createElement("div");
   headerEl.className = `${MARKER_MODAL_CLASS}-header`;
@@ -679,7 +696,7 @@ function ensureOverlay(composer) {
     pointerEvents: "none",
     opacity: "0",
     transition: "opacity 120ms ease",
-    zIndex: "2147483604",
+    zIndex: String(Z_STACK.ghost),
     color: "rgba(210,215,230,0.7)",
     fontStyle: "italic",
     whiteSpace: "pre",
@@ -722,6 +739,7 @@ function ensureOverlay(composer) {
     composer,
   };
   overlayMap.set(composer, data);
+  composersWithOverlay.add(composer);
   return data;
 }
 
@@ -729,6 +747,12 @@ function hideOverlay(data, composer) {
   if (!data || !data.el) return;
   data.el.style.opacity = "0";
   data.el.style.pointerEvents = "none";
+  if (data.el.dataset.prevPointerEvents) {
+    delete data.el.dataset.prevPointerEvents;
+  }
+  if (!suppressSuggestionBroadcast) {
+    publishModalEvent({ type: "close", id: MODAL_IDS.suggestion });
+  }
   data.visible = false;
   if (data.hoverTimer) {
     clearTimeout(data.hoverTimer);
@@ -1236,6 +1260,22 @@ function acceptSuggestion(composer, state) {
 }
 
 export function ensurePromptSuggestionUI(composer) {
+  if (!unsubscribeModalBus) {
+    unsubscribeModalBus = subscribeToModalChannel((event) => {
+      if (!event) return;
+      if (event.type === "close" && event.id === MODAL_IDS.suggestion) {
+        suppressSuggestionBroadcast = true;
+        [...composersWithOverlay].forEach((cmp) => clearPromptSuggestionUI(cmp));
+        suppressSuggestionBroadcast = false;
+        return;
+      }
+      if (event.type === "open" && event.id !== MODAL_IDS.suggestion) {
+        suppressSuggestionBroadcast = true;
+        [...composersWithOverlay].forEach((cmp) => clearPromptSuggestionUI(cmp));
+        suppressSuggestionBroadcast = false;
+      }
+    });
+  }
   ensureOverlay(composer);
 }
 
@@ -1243,6 +1283,7 @@ export function updatePromptSuggestionUI(composer) {
   const state = getComposerState(composer);
   const data = ensureOverlay(composer);
   const suggestion = state?.suggestion;
+
 
   if (isSuggestionCooldownActive(state)) {
     hideOverlay(data, composer);
@@ -1317,11 +1358,18 @@ export function updatePromptSuggestionUI(composer) {
   data.el.style.left = `${left}px`;
   data.el.style.top = `${top}px`;
   data.el.style.opacity = "1";
+  if (!data.el.dataset.prevPointerEvents) {
+    data.el.dataset.prevPointerEvents = data.el.style.pointerEvents || "";
+  }
   data.el.style.pointerEvents = "auto";
   data.visible = true;
   data.fullPreview = ghost.full;
   data.title = suggestion.guard?.title || "Suggested prompt";
   data.guardBody = suggestion.guard?.body || "";
+
+  if (!suppressSuggestionBroadcast) {
+    publishModalEvent({ type: "open", id: MODAL_IDS.suggestion });
+  }
 
   if (data.el.matches(":hover")) {
     scheduleTooltip(composer, 0);
@@ -1361,6 +1409,9 @@ function showSuggestionTooltip(composer) {
 
   const doc = composer.ownerDocument || document;
   const tooltip = ensureTooltip(doc);
+  if (data?.el) {
+    data.el.style.pointerEvents = "none";
+  }
   const guard = state.suggestion.guard || {};
   const title = guard.title || data.title || "Suggested prompt";
   const preview = guard.preview || data.fullPreview || "";
