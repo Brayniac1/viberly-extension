@@ -731,9 +731,11 @@ function schedulePostInputRefresh(composer, previousText) {
 
   window[DEVTOOLS_KEY] = devtools;
 
-  console.info(
-    `${LOG_PREFIX} skeleton ready → run window.${DEVTOOLS_KEY}.openModalTest()`
-  );
+  if (INTENT_DEBUG) {
+    console.info(
+      `${LOG_PREFIX} skeleton ready → run window.${DEVTOOLS_KEY}.openModalTest()`
+    );
+  }
 })();
   function normalizeVisibleText(text = "") {
     return String(text || "")

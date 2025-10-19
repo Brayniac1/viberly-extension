@@ -3410,6 +3410,8 @@
     __vgStartAnchorToPill(wrap);
 
     // Close helpers (outside click + Escape), robust against stopPropagation
+    let unsubscribeModal = null;
+
     const closeMenu = () => {
       window.__VG_LAST_MENU_CLOSE = performance.now();
       try {
@@ -3432,6 +3434,9 @@
         delete window.__VG_QM_CLOSE;
       } catch {}
       try {
+        unsubscribeModal?.();
+      } catch {}
+      try {
         ModalBus?.publish?.({ type: "close", id: "quickmenu_modal" });
       } catch {}
     };
@@ -3443,7 +3448,7 @@
     } catch {}
 
     try {
-      ModalBus?.subscribe?.((event) => {
+      unsubscribeModal = ModalBus?.subscribe?.((event) => {
         if (!event) return;
         if (event.id === "quickmenu_modal") return;
         if (event.type === "open") {

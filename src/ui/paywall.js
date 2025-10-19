@@ -208,7 +208,6 @@ async function resolvePlanAndUsage(opts = {}) {
 // ---------- Plain-DOM fallback (usage always shown as limit/limit) ----------
 async function showPlainFallback(opts = {}) {
   try {
-    console.warn("[VG][paywall] using plain-DOM fallback");
     document.getElementById("vg-paywall-fallback")?.remove();
 
     const {
@@ -223,6 +222,15 @@ async function showPlainFallback(opts = {}) {
       opts
     );
     const isCG = isCGReason(reason);
+    const isEnhance = reason === "ai_enhance_limit";
+
+    const enhanceLimitLabel =
+      tier === "basic" ? "5 Enhance Prompts / mo" : "Unlimited Enhance Prompts";
+    const enhanceResetText = enhanceResetISO
+      ? ` Your monthly counter resets on <b>${
+          new Date(enhanceResetISO).toLocaleDateString()
+        }</b>.`
+      : "";
 
     const titleHTML = isCG
       ? "You’ve hit your Custom Prompts limit"
@@ -237,9 +245,7 @@ async function showPlainFallback(opts = {}) {
       : isEnhance
       ? `Your current plan <b>${
           tier.charAt(0).toUpperCase() + tier.slice(1)
-        }</b> allows <b>${
-          tier === "basic" ? "5 Enhance Prompts / mo" : "Unlimited Enhance Prompts"
-        }</b>.`
+        }</b> includes <b>${enhanceLimitLabel}</b>.${enhanceResetText}`
       : `Your current plan <b>${
           tier.charAt(0).toUpperCase() + tier.slice(1)
         }</b> allows up to <b>${prettyLimit(limit)}</b> unique quick adds.`;
@@ -285,9 +291,8 @@ async function showPlainFallback(opts = {}) {
     const note = el("div", {}, []);
     note.style.cssText =
       "border:1px solid #2a2a33;border-radius:10px;background:#0c0e13;padding:10px 12px";
-    const usedVal = isCG ? opts.used ?? 0 : opts.quick ?? 0;
     const usageText = isEnhance
-      ? `Usage: ${enhanceMonth} / ${tier === "basic" ? "5" : "∞"}`
+      ? `Usage: ${enhanceMonth} / ${tier === "basic" ? 5 : "∞"}`
       : isCG
       ? `Usage: ${used} / ${prettyLimit(limit)}`
       : `Usage: ${quick} / ${prettyLimit(limit)}`;
@@ -552,7 +557,15 @@ export async function show(opts = {}) {
         try {
           host.remove();
         } catch {}
-        showPlainFallback({ tier, limit, reason });
+        showPlainFallback({
+          tier,
+          used,
+          quick,
+          limit,
+          reason,
+          enhanceMonth,
+          enhanceResetISO,
+        });
       }
     }, 80);
 
