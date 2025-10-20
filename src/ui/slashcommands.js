@@ -996,6 +996,9 @@
                 type: "SET_SESSION",
                 access_token: session.access_token,
                 refresh_token: session.refresh_token,
+                expires_at: session.expires_at ?? null,
+                userId: session.user?.id || null,
+                email: session.user?.email || null,
               })
               .then(() => resolve());
           });

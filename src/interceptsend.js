@@ -14,14 +14,53 @@
     return;
   }
 
+  const SUPABASE_URL = "https://auudkltdkakpnmpmddaj.supabase.co";
+  const SUPABASE_ANON_KEY =
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1dWRrbHRka2FrcG5tcG1kZGFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU3MDA3NTYsImV4cCI6MjA3MTI3Njc1Nn0.ukDpH6EXksctzWHMSdakhNaWbgFZ61UqrpvzwTy03ho";
+  const MAX_LEGACY_INTENT_TEXT = 5000;
+
   function estimateTokensApprox(text) {
     const clean = String(text || "").trim();
     if (!clean) return 0;
     const words = clean.split(/\s+/).filter(Boolean).length;
     const chars = clean.length;
-  const approx = Math.max(words, Math.round(chars / 4));
-  return approx || 0;
-}
+    const approx = Math.max(words, Math.round(chars / 4));
+    return approx || 0;
+  }
+
+  function sendRuntimeMessage(message) {
+    if (typeof browser !== "undefined" && browser?.runtime?.sendMessage) {
+      return browser.runtime.sendMessage(message);
+    }
+    if (typeof chrome !== "undefined" && chrome?.runtime?.sendMessage) {
+      return new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage(message, (resp) => {
+            const err = chrome.runtime.lastError;
+            if (err) {
+              reject(new Error(err.message || String(err)));
+              return;
+            }
+            resolve(resp);
+          });
+        } catch (err) {
+          reject(err);
+        }
+      });
+    }
+    return Promise.reject(new Error("NO_RUNTIME"));
+  }
+
+  async function sendRuntimeMessageSafe(message) {
+    try {
+      return await sendRuntimeMessage(message);
+    } catch (err) {
+      if (INTERCEPT_DEBUG) {
+        console.warn("[VG] runtime message failed", err);
+      }
+      return null;
+    }
+  }
 
 const RESPONSE_EXCERPT_LIMIT = 1500;
 const RESPONSE_MIN_LENGTH = 80;
@@ -103,6 +142,13 @@ function submitResponseCapture(entry, latest) {
     cleanupPendingCapture(entry.intentMessageId);
     return;
   }
+  if (INTERCEPT_DEBUG) {
+    console.debug("[VG][intent] response capture ready", {
+      intentMessageId: entry.intentMessageId,
+      host: entry.host,
+      length: excerpt.length,
+    });
+  }
   const payload = {
     intentMessageId: entry.intentMessageId,
     excerpt,
@@ -137,6 +183,12 @@ function scheduleResponseCapture({
   sourceHost,
 }) {
   if (!intentMessageId) return;
+  if (INTERCEPT_DEBUG) {
+    console.debug("[VG][intent] schedule response capture", {
+      intentMessageId,
+      sourceHost,
+    });
+  }
   const host =
     typeof sourceHost === "string" && sourceHost
       ? sourceHost.toLowerCase()
@@ -170,6 +222,14 @@ function scheduleResponseCapture({
     if (entry.cancelled) return;
     const latest = getLatestAssistantReply(entry.host);
     if (latest && latest.hash) {
+      if (INTERCEPT_DEBUG) {
+        console.debug("[VG][intent] poll assistant", {
+          intentMessageId: entry.intentMessageId,
+          hash: latest.hash,
+          length: latest.text?.length || 0,
+          stableCount: entry.stableCount,
+        });
+      }
       if (latest.hash === entry.lastHash) {
         entry.stableCount += 1;
       } else {
@@ -235,6 +295,177 @@ function cloneSnapshot(record) {
   };
 }
 
+  function finalizeIntentCaptureResult(
+    record,
+    tracker,
+    snapshot,
+    payload,
+    meta
+  ) {
+    if (!meta || !meta.id) return;
+    if (record) {
+      record.intentMessageId = meta.id;
+      record.intentCapturedAt = meta.capturedAt || payload.capturedAt;
+      record.sourceHost = meta.sourceUrl || payload.sourceUrl || null;
+      if (tracker.cache && record.composer) {
+        tracker.cache.set(record.composer, record);
+      }
+    }
+    scheduleResponseCapture({
+      composerId: snapshot.composerId || null,
+      intentMessageId: meta.id,
+      sourceHost: meta.sourceUrl || payload.sourceUrl || null,
+    });
+  }
+
+  function trimIntentPayloadForLegacy(payload) {
+    if (!payload) return payload;
+    const trimmed = { ...payload };
+    if (
+      typeof trimmed.rawText === "string" &&
+      trimmed.rawText.length > MAX_LEGACY_INTENT_TEXT
+    ) {
+      trimmed.rawText = trimmed.rawText.slice(0, MAX_LEGACY_INTENT_TEXT);
+    }
+    if (
+      typeof trimmed.trimmedText === "string" &&
+      trimmed.trimmedText.length > MAX_LEGACY_INTENT_TEXT
+    ) {
+      trimmed.trimmedText = trimmed.trimmedText.slice(
+        0,
+        MAX_LEGACY_INTENT_TEXT
+      );
+    }
+    if (Array.isArray(trimmed.intentSegments)) {
+      trimmed.intentSegments = trimmed.intentSegments
+        .slice(0, 25)
+        .map((seg) => {
+          if (!seg || typeof seg !== "object") return null;
+          const next = { ...seg };
+          if (typeof next.text === "string") {
+            next.text = next.text.slice(0, MAX_LEGACY_INTENT_TEXT);
+          }
+          return next;
+        })
+        .filter(Boolean);
+    }
+    return trimmed;
+  }
+
+  async function legacyIntentCapture(payload, record, tracker, snapshot) {
+    const safePayload = trimIntentPayloadForLegacy(payload);
+    const resp = await sendRuntimeMessageSafe({
+      type: "VG_INTENT_CAPTURE",
+      payload: safePayload,
+    });
+    if (
+      resp &&
+      resp.ok &&
+      resp.id &&
+      typeof resp.id === "string"
+    ) {
+      finalizeIntentCaptureResult(record, tracker, snapshot, safePayload, {
+        id: resp.id,
+        capturedAt: resp.capturedAt || safePayload.capturedAt,
+        sourceUrl: safePayload.sourceUrl || null,
+      });
+    }
+  }
+
+  async function uploadIntentViaRest(payload) {
+    try {
+      const sessionResp = await sendRuntimeMessageSafe({
+        type: "GET_SESSION",
+      });
+      const session = sessionResp?.status || {};
+      const isSignedIn = session?.signedIn === true;
+      const token =
+        isSignedIn && typeof session?.access_token === "string"
+          ? session.access_token
+          : null;
+      const userId =
+        isSignedIn && typeof session?.userId === "string"
+          ? session.userId
+          : null;
+      if (!token || !userId) {
+        if (INTERCEPT_DEBUG) {
+          console.warn("[VG] intent REST skipped (no user session)", {
+            signedIn: session?.signedIn ?? null,
+            hasToken: Boolean(session?.access_token),
+            hasUserId: Boolean(session?.userId),
+          });
+        }
+        return null;
+      }
+
+      const insertRow = {
+        user_id: userId,
+        conversation_id: payload.conversationId || null,
+        source_url: payload.sourceUrl || null,
+        captured_at: payload.capturedAt,
+        raw_text: payload.rawText,
+        intent_segments: payload.intentSegments || [],
+        token_count: payload.tokenCount ?? null,
+        is_rich_text: !!payload.isRichText,
+        params:
+          typeof payload.params === "object" && payload.params
+            ? payload.params
+            : null,
+      };
+
+      const resp = await fetch(`${SUPABASE_URL}/rest/v1/intent_messages`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          apikey: SUPABASE_ANON_KEY,
+          authorization: `Bearer ${token}`,
+          Prefer: "return=representation",
+        },
+        body: JSON.stringify(insertRow),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        throw new Error(`REST insert failed (${resp.status}): ${text}`);
+      }
+
+      const rows = await resp.json().catch(() => null);
+      if (Array.isArray(rows) && rows[0]?.intent_message_id) {
+        return rows[0];
+      }
+      return null;
+    } catch (err) {
+      if (INTERCEPT_DEBUG) {
+        console.warn("[VG] intent REST insert failed", err);
+      }
+      return null;
+    }
+  }
+
+  async function sendIntentCapture(payload, record, tracker, snapshot) {
+    const restRow = await uploadIntentViaRest(payload);
+    if (restRow && restRow.intent_message_id) {
+      const meta = {
+        id: restRow.intent_message_id,
+        capturedAt: restRow.captured_at || payload.capturedAt,
+        sourceUrl: restRow.source_url || payload.sourceUrl || null,
+      };
+      finalizeIntentCaptureResult(record, tracker, snapshot, payload, meta);
+      await sendRuntimeMessageSafe({
+        type: "VG_INTENT_CAPTURE_META",
+        payload: {
+          intentMessageId: meta.id,
+          capturedAt: meta.capturedAt,
+          sourceUrl: meta.sourceUrl,
+          tokenCount: payload.tokenCount ?? null,
+        },
+      });
+      return;
+    }
+
+    await legacyIntentCapture(payload, record, tracker, snapshot);
+  }
+
 function captureIntentSnapshot(reason = "send") {
   try {
     const tracker = window.__VG?.intentTracker;
@@ -246,19 +477,19 @@ function captureIntentSnapshot(reason = "send") {
     const key = `${snapshot.trimmedText}::${snapshot.segments.length}`;
     const now = Date.now();
     if (
-        tracker.lastSentKey === key &&
-        now - (tracker.lastSentAt || 0) < 1500
-      ) {
-        return;
-      }
+      tracker.lastSentKey === key &&
+      now - (tracker.lastSentAt || 0) < 1500
+    ) {
+      return;
+    }
 
-      tracker.lastSentKey = key;
-      tracker.lastSentAt = now;
+    tracker.lastSentKey = key;
+    tracker.lastSentAt = now;
 
-      const payload = {
-        reason,
-        rawText: snapshot.rawText,
-        trimmedText: snapshot.trimmedText,
+    const payload = {
+      reason,
+      rawText: snapshot.rawText,
+      trimmedText: snapshot.trimmedText,
       intentSegments: snapshot.segments,
       isRichText: snapshot.isRichText,
       sourceUrl: location?.hostname ? location.hostname : null,
@@ -268,61 +499,7 @@ function captureIntentSnapshot(reason = "send") {
       conversationId: snapshot.conversationId || null,
     };
 
-    if (browser?.runtime?.sendMessage) {
-      browser.runtime
-        .sendMessage({ type: "VG_INTENT_CAPTURE", payload })
-        .then((resp) => {
-          if (
-            resp &&
-            resp.ok &&
-            resp.id &&
-            typeof resp.id === "string" &&
-            record
-          ) {
-            record.intentMessageId = resp.id;
-            record.intentCapturedAt = resp?.capturedAt || payload.capturedAt;
-            record.sourceHost = payload.sourceUrl || null;
-            if (tracker.cache && record.composer) {
-              tracker.cache.set(record.composer, record);
-            }
-            scheduleResponseCapture({
-              composerId: snapshot.composerId || null,
-              intentMessageId: resp.id,
-              sourceHost: payload.sourceUrl || null,
-            });
-          }
-        })
-        .catch(() => void 0);
-    } else if (
-      typeof chrome !== "undefined" &&
-      chrome?.runtime?.sendMessage
-    ) {
-      chrome.runtime.sendMessage(
-        { type: "VG_INTENT_CAPTURE", payload },
-        (resp) => {
-          void chrome.runtime.lastError;
-          if (
-            resp &&
-            resp.ok &&
-            resp.id &&
-            typeof resp.id === "string" &&
-            record
-          ) {
-            record.intentMessageId = resp.id;
-            record.intentCapturedAt = resp?.capturedAt || payload.capturedAt;
-            record.sourceHost = payload.sourceUrl || null;
-            if (tracker.cache && record.composer) {
-              tracker.cache.set(record.composer, record);
-            }
-            scheduleResponseCapture({
-              composerId: snapshot.composerId || null,
-              intentMessageId: resp.id,
-              sourceHost: payload.sourceUrl || null,
-            });
-          }
-        }
-      );
-    }
+    sendIntentCapture(payload, record, tracker, snapshot);
   } catch (err) {
     console.debug("[VG] intent capture emit failed", err);
   }

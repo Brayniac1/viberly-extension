@@ -21,6 +21,9 @@
                 type: "SET_SESSION",
                 access_token: s.access_token,
                 refresh_token: s.refresh_token,
+                expires_at: s.expires_at ?? null,
+                userId: s.user?.id || null,
+                email: s.user?.email || null,
               })
               .then((r) => res(!!r?.ok));
           });
@@ -87,6 +90,9 @@
                 type: "SET_SESSION",
                 access_token: s.access_token,
                 refresh_token: s.refresh_token,
+                expires_at: s.expires_at ?? null,
+                userId: s.user?.id || null,
+                email: s.user?.email || null,
               })
               .then(() => res())
           );

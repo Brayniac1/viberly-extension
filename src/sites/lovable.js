@@ -40,13 +40,17 @@ async function syncSessionToBackground() {
     const {
       data: { session },
     } = await db.auth.getSession();
-    const at = session?.access_token;
-    const rt = session?.refresh_token;
-    if (!at || !rt) return; // nothing to push
+    if (!session?.access_token || !session?.refresh_token) return;
 
-    browser.runtime
-      .sendMessage({ type: "SET_SESSION", access_token: at, refresh_token: rt })
-      .then((r) => console.log("[popup→bg] SET_SESSION →", r));
+    const response = await browser.runtime.sendMessage({
+      type: "SET_SESSION",
+      access_token: session.access_token,
+      refresh_token: session.refresh_token,
+      expires_at: session.expires_at ?? null,
+      userId: session.user?.id || null,
+      email: session.user?.email || null,
+    });
+    console.log("[popup→bg] SET_SESSION →", response);
   } catch (e) {
     console.warn("[popup→bg] SET_SESSION failed", e);
   }
