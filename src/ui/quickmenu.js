@@ -50,10 +50,11 @@
   let __vgQM_RAF = 0; // rAF handle while anchoring
 
   // ===== DEBUG logger (diagnostics only; safe no-op if console unavailable) =====
-  const __VG_QM_DEBUG = true;
+  const __VG_QM_DEBUG = Boolean(window.VG_QM_DEBUG);
   function __qmLog(...args) {
+    if (!__VG_QM_DEBUG) return;
     try {
-      __VG_QM_DEBUG && console.debug("[VG][QM]", ...args);
+      console.debug("[VG][QM]", ...args);
     } catch {}
   }
 
