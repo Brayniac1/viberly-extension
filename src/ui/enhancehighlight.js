@@ -787,7 +787,7 @@
     btnCancel.textContent = "Cancel";
     btnCancel.style.cssText =
       "background:transparent;border:0;color:#aeb6c2;font:600 12px system-ui,-apple-system,Segoe UI,Inter,Roboto,Arial,sans-serif;cursor:pointer;padding:4px 2px;";
-    btnCancel.onmouseenter = () => {
+    btnCancel.onmouseenter = () => {I 
       btnCancel.style.color = "#cfd3dc";
     };
     btnCancel.onmouseleave = () => {

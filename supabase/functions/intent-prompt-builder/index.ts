@@ -43,27 +43,34 @@ Return only a JSON object:
   "tags": [string],
   "site_category": string,
   "variables": [ { "name": string, "description": string } ],
-  "preview": string
+  "preview": string,
+  "config": {
+    "intent_task_label": string,
+    "intent_task_key": string
+  }
 }
 
+---------------------------------------------
 1. Core Rules
-
+---------------------------------------------
 Always produce a title and body — never leave them empty.
 Derive tags from the task_label (e.g., ["blog", "content", "marketing"]).
 Define variables only when clearly implied (e.g., client name, topic, tone).
 Include a preview field following the Preview Rules below.
-Output pure JSON only — no Markdown or commentary.
+Output pure JSON only — no Markdown, commentary, or extra text.
 
+---------------------------------------------
 2. Intent Label & Tag Requirements (Critical)
-
-- Populate 'config.intent_task_label' with a concise 3–6 word task label (noun phrase) that summarizes the reusable task. Avoid verbs unless they are part of a noun phrase ("SEO Audit Creation" is acceptable).
+---------------------------------------------
+- Populate 'config.intent_task_label' with a concise 3–6 word task label (noun phrase) summarizing the reusable task. Avoid verbs unless part of a noun phrase ("SEO Audit Creation" is acceptable).
 - Populate 'config.intent_task_key' with the same label converted to lowercase kebab-case (letters, numbers, and hyphens only).
 - Tags must capture every meaningful noun or domain-specific adjective from the task_label, examples, messages, and recent outputs. Include distinct deliverables and key objects such as "blog", "asset", "kit", "handoff", "campaign", etc.
 - Exclude polite words, pronouns, helper verbs, and vague modifiers (e.g., please, create, make, prepare, help, write, develop).
 - Normalize tags to lowercase, replace spaces with hyphens, and de-duplicate. Return 4–8 tags whenever possible.
 
+---------------------------------------------
 3. Repeatability Logic (Critical)
-
+---------------------------------------------
 Determine how specific the reusable prompt should be:
 
 Variable subjects → Generalize
@@ -78,8 +85,33 @@ Heuristic:
 Variable topics → generalize.
 Consistent context → specialize.
 
-4. Prompt Body Construction (User-Directed Format)
+---------------------------------------------
+3A. Specificity Balancing Rules (New — Critical)
+---------------------------------------------
+Evaluate repetition and stability to balance generality with reusability:
 
+A. Repetition Classification
+- Low repetition (≤2 similar requests): treat as ad-hoc → generalize heavily.
+- Medium repetition (3–5 similar requests): keep reusable structure but remove ephemeral nouns (industries, brand names).
+- High repetition (≥6 similar requests): stable workflow → preserve repeated specifics (e.g., consistent word limits, brand voice, deliverable format).
+
+B. Variable vs. Stable Element Rules
+- If an element appears ≥2 times across examples → treat as stable → keep it in the reusable prompt.
+- If an element appears <2 times or changes frequently (industry, company, event, product) → generalize it into a variable placeholder {variable_name}.
+- Always preserve numerical or structural constraints (word counts, character limits, section counts) since these define repeatable formatting.
+- Never preserve ephemeral topical nouns (industries, one-time subjects) unless repetition proves they are part of a stable niche.
+- When generalizing, rename the variable descriptively (“{industry}”, “{audience_type}”, “{topic}”, “{client_name}”) and include each in the variables array with a short description.
+
+C. Balancing Heuristic Summary
+- Variable subjects or nouns → generalize to variables.
+- Stable numeric, stylistic, or formatting constraints → preserve.
+- Repeated nouns (same company, same deliverable type) → keep specific.
+- Changing topical or ephemeral details → replace with variables.
+- When uncertain, bias toward generalization to maintain reusability.
+
+---------------------------------------------
+4. Prompt Body Construction (User-Directed Format)
+---------------------------------------------
 The body must read like the user is giving instructions to the AI.
 Use first-person phrasing (“I need you to…”, “Help me…”, “Make sure you…”).
 Do not describe the task abstractly; speak directly to the model.
@@ -92,8 +124,9 @@ Follow these rules:
 - Mirror the tone, structure, and deliverables found in recent_outputs.
 - Preserve real details (client names, deliverables) but never invent new ones.
 
+---------------------------------------------
 5. Recommended Structure (Adapt per Task)
-
+---------------------------------------------
 Opening Line / Role Statement — e.g., “You are an expert [field]. I need you to…”
 Intent / Objective — what outcome the user wants
 Context — background or conditions (from examples/messages)
@@ -102,87 +135,83 @@ Format / Output Requirements — how to structure the result
 Verification / Quality Check — quick self-check criteria for the AI
 (You may rename, merge, or omit sections if another structure fits the task type.)
 
+---------------------------------------------
 6. Field-Specific Guidance
+---------------------------------------------
+Coding / Technical → emphasize precision, guardrails, validation steps.
+Creative / Writing → focus on tone, storytelling, and stylistic consistency.
+Analytical / Professional → stress clarity, logic, and structure.
 
-Coding / Technical: emphasize precision, guardrails, validation steps.
-Creative / Writing: focus on tone, storytelling, and stylistic consistency.
-Analytical / Professional: stress clarity, logic, and structure.
-
-7. Preview Generation Rules (Expanded for Workflows & Operations)
-
+---------------------------------------------
+7. Preview Generation Rules (Expanded)
+---------------------------------------------
 Create a preview string summarizing the purpose of the prompt.
 
 Goal:
 The preview is a short, natural-language completion that reads like a helpful continuation of the user’s intent — reflecting how Viberly helps people get work done.
 
-Rules
-Length: 80–100 characters (max 100).
-Tone: Action-oriented, concise, and specific — no fluff or filler.
-Verb-first style: Choose a strong leading verb that matches the type of work reflected in the prompt.
-Use this expanded set of categories:
+Rules:
+- Length: 80–100 characters (max 100)
+- Tone: action-oriented, concise, specific
+- Verb-first style matching the task type
+- No punctuation at the end unless required by grammar
+- No markdown or quotes — plain text only
+
+Verb Category Examples:
 
 Creative / Content Work
-Write – for text, blogs, captions, or copy.
-Create – for assets, deliverables, templates, or materials.
-Design – for visuals, layouts, or UI.
-Develop – for structured plans, outlines, or concepts.
-Compose – for professional or artistic writing (emails, posts, scripts).
+Write – for text, blogs, captions, or copy
+Create – for assets, deliverables, templates, or materials
+Design – for visuals, layouts, or UI
+Develop – for structured plans, outlines, or concepts
+Compose – for professional or artistic writing
+
 Analytical / Technical Work
-Analyze – for data, performance, or insights.
-Audit – for checking, reviewing, or diagnosing.
-Optimize – for improving efficiency or results.
-Validate – for confirming accuracy or logic.
-Configure – for setup or system tuning.
+Analyze – for data, performance, or insights
+Audit – for checking, reviewing, or diagnosing
+Optimize – for improving efficiency or results
+Validate – for confirming accuracy or logic
+Configure – for setup or system tuning
+
 Process / Workflow Management
-Facilitate – for coordination, transitions, or team handoffs.
-Organize – for structuring tasks, assets, or workflows.
-Streamline – for simplifying a workflow or process.
-Automate – for prompts related to systemized or recurring tasks.
-Schedule – for planning, assigning, or sequencing actions.
+Facilitate – for coordination, transitions, or handoffs
+Organize – for structuring tasks, assets, or workflows
+Streamline – for simplifying a workflow or process
+Automate – for recurring or systemized tasks
+Schedule – for planning or sequencing actions
 
 Communication / Collaboration
-Draft – for emails, announcements, proposals, or outlines.
-Coordinate – for tasks involving multiple people or dependencies.
-Respond – for follow-ups or message handling.
-Clarify – for prompts that refine understanding or resolve confusion.
-Summarize / Explain – for making something understandable.
+Draft – for emails, announcements, proposals, or outlines
+Coordinate – for tasks involving multiple people
+Respond – for follow-ups or message handling
+Clarify – for refining understanding
+Summarize / Explain – for making content understandable
 
 Governance / Control
-Prevent – for restrictions, policies, or guardrails.
-Ensure – for quality checks and compliance.
-Monitor – for prompts about ongoing tracking or oversight.
-Enforce – for consistency or rules.
-Approve / Review – for validation steps in workflows.
+Prevent – for restrictions or guardrails
+Ensure – for quality checks or compliance
+Monitor – for ongoing tracking or oversight
+Enforce – for consistency or rules
+Approve / Review – for validation steps
 
 Strategic / Decision Work
-Plan – for outlining strategy or next steps.
-Prioritize – for task ranking or focus decisions.
-Assess – for evaluating options or outcomes.
-Recommend – for suggestion-based tasks.
-Define – for establishing standards or roles.
+Plan – for outlining strategy or next steps
+Prioritize – for ranking or focus decisions
+Assess – for evaluating outcomes
+Recommend – for suggestion-based tasks
+Define – for establishing standards or roles
 
 Catch-all / General
 If no clear context applies, choose from:
-Create, Write, Design, Summarize, Explain, Develop, Facilitate, Organize, Plan, Prevent.
+Create, Write, Design, Summarize, Explain, Develop, Facilitate, Organize, Plan, Prevent
 
-Meaning over mirroring: Don’t copy the first sentence; infer purpose.
-Standalone: It should make sense even if shown mid-sentence.
-Specificity: Mention clear deliverables or results (“handoff kit,” “review report,” “status summary”).
-Format: No markdown or quotes inside; plain text only.
+Meaning over mirroring: infer the purpose, don’t copy the first sentence.
+Standalone: should make sense mid-sentence.
+Specificity: mention clear deliverables or results (“handoff kit,” “review report,” “status summary”).
 
-Examples
-"Facilitate a smooth project handoff by preparing the final summary and sharing key updates."
-"Organize campaign assets and deadlines for a more efficient marketing workflow."
-"Write engaging marketing copy with clear hooks and strong calls to action."
-"Design a branded presentation deck with consistent visuals and typography."
-"Prevent unauthorized edits to API configurations or production data."
-"Analyze campaign performance metrics to identify opportunities for optimization."
-"Plan the next sprint’s deliverables and assign owners for each milestone."
-"Clarify client feedback into structured action items for the design team."
-"Streamline onboarding workflows by consolidating repetitive setup tasks."
-
+---------------------------------------------
 8. Output Format
-
+---------------------------------------------
 {
   "title": "Write Blog Articles",
   "body": "You are an expert content creator. I need you to...",
@@ -195,7 +224,7 @@ Examples
     "intent_task_key": "blog-article-writing"
   }
 }
-  Return JSON only.
+Return JSON only.
 `.trim();
 
 function summarizeMessages(messages: Array<Record<string, unknown>>): string {
@@ -330,6 +359,30 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Prompt builder returned empty title/body", debug: result }, 502);
   }
 
+  const previewRaw = typeof result?.preview === "string" ? result.preview.trim() : "";
+  if (!previewRaw) {
+    return json({ error: "Prompt builder returned empty preview", debug: result }, 502);
+  }
+
+  function normalizePreview(value: unknown): string {
+    const raw = String(value ?? "").replace(/\s+/g, " ").trim();
+    if (!raw) return "";
+    const maxLen = 100;
+    if (raw.length <= maxLen) return raw;
+    const truncated = raw.slice(0, maxLen);
+    const lastSpace = truncated.lastIndexOf(" ");
+    const candidate =
+      lastSpace > 60 ? truncated.slice(0, lastSpace) : truncated;
+    return `${candidate.replace(/\s+$/, "")}...`;
+  }
+
+  const previewCandidate = normalizePreview(previewRaw);
+  if (!previewCandidate) {
+    return json({ error: "Prompt builder returned empty preview", debug: result }, 502);
+  }
+
+  const preview = previewCandidate;
+
   const tags = Array.isArray(result?.tags)
     ? result.tags.map((tag: unknown) => String(tag ?? "").trim()).filter(Boolean)
     : [];
@@ -342,6 +395,7 @@ Deno.serve(async (req: Request) => {
     ok: true,
     title,
     body: promptBody,
+    preview,
     tags,
     site_category: siteCategory,
     variables,

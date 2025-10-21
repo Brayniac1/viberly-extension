@@ -39,12 +39,13 @@ export function getComposerState(composer) {
         triggeredAt: 0,
         baselineText: "",
         baselineCaret: -1,
-        sentenceStage: null,
-      },
-      typedSinceSuggestion: 0,
-      wordsTypedSinceSuggestion: 0,
-      suggestionTypingBuffer: "",
-    };
+      sentenceStage: null,
+    },
+    typedSinceSuggestion: 0,
+    wordsTypedSinceSuggestion: 0,
+    suggestionTypingBuffer: "",
+    suggestionDismissTimer: null,
+  };
     composerState.set(composer, state);
   }
   return state;
@@ -73,6 +74,10 @@ export function clearComposerState(composer) {
   if (state?.postInputTimer != null) {
     clearTimeout(state.postInputTimer);
     state.postInputTimer = null;
+  }
+  if (state?.suggestionDismissTimer) {
+    clearTimeout(state.suggestionDismissTimer);
+    state.suggestionDismissTimer = null;
   }
   if (state) {
     state.scrollHandlers = [];

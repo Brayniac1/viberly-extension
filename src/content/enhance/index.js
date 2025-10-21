@@ -3,6 +3,7 @@
 // to render markers directly from the latest composer snapshot.
 
 import { ENH_CFG, ENH_ROOT_FLAG, LOG_PREFIX } from "./config.js";
+import { subscribeToModalChannel, MODAL_IDS } from "./modal-channel.js";
 import { mountHighlightHost } from "./highlight-dom.js";
 import { mountHoverModal } from "./hover-modal.js";
 import { initComposerWatch } from "./composer-watch.js";
@@ -115,6 +116,33 @@ function extractInsertedText(previous = "", next = "") {
     endNext -= 1;
   }
   return next.slice(start, endNext + 1);
+}
+
+function clearSuggestionTimer(state) {
+  if (state?.suggestionDismissTimer) {
+    clearTimeout(state.suggestionDismissTimer);
+    state.suggestionDismissTimer = null;
+  }
+}
+
+function enterSuggestionCooldown(composer, state, reason, context = {}) {
+  if (!state) return;
+  clearSuggestionTimer(state);
+  activateSuggestionCooldown(state, reason, context);
+  state.suggestion = null;
+  state.suggestionCandidates = [];
+  state.suggestionIndex = -1;
+  state.suggestionEvalToken = 0;
+  state.suggestionHiddenUntil = Date.now() + 400;
+  clearPromptSuggestionUI(composer);
+}
+
+function scheduleSuggestionTimeout(composer, state) {
+  clearSuggestionTimer(state);
+  if (!state?.suggestion) return;
+  state.suggestionDismissTimer = setTimeout(() => {
+    enterSuggestionCooldown(composer, state, "timeout");
+  }, 6000);
 }
 
 function getComposerCaretOffset(composer) {
@@ -405,6 +433,13 @@ function updateComposerIntent(composer) {
   refreshSuggestion({ composer, state, text })
     .then(() => {
       updatePromptSuggestionUI(composer);
+      const latest = getComposerState(composer);
+      if (!latest) return;
+      if (latest.suggestion) {
+        scheduleSuggestionTimeout(composer, latest);
+      } else {
+        clearSuggestionTimer(latest);
+      }
     })
     .catch((err) => {
       if (INTENT_DEBUG) {
@@ -543,6 +578,7 @@ function schedulePostInputRefresh(composer, previousText) {
 
   const highlight = mountHighlightHost();
   const hover = mountHoverModal();
+  let modalUnsubscribe = null;
 
   const watcher = initComposerWatch({
     onComposerFound: (composer) => {
@@ -571,8 +607,6 @@ function schedulePostInputRefresh(composer, previousText) {
       const pasteEvent = isPasteInputType(inputType);
       const paragraphEvent = isParagraphInputType(inputType);
       const composing = Boolean(event?.isComposing);
-      let insertedText = "";
-
       const deletionEvent =
         !undoRedo &&
         !pasteEvent &&
@@ -587,6 +621,7 @@ function schedulePostInputRefresh(composer, previousText) {
         !currentRawText.length;
 
       if ((deletionEvent || becameEmpty) && hadSuggestion) {
+        clearSuggestionTimer(state);
         state.suggestion = null;
         state.suggestionCandidates = [];
         state.suggestionIndex = -1;
@@ -595,26 +630,33 @@ function schedulePostInputRefresh(composer, previousText) {
         clearPromptSuggestionUI(composer);
       }
 
-      if ((hadSuggestion || cooldownActiveBefore) && !undoRedo && !composing) {
-        insertedText = extractInsertedText(previousRawText, currentRawText);
+      if ((hadSuggestion || cooldownActiveBefore) && !undoRedo) {
+        const rawPrevious = previousRawText || "";
+        const rawCurrent = currentRawRaw || "";
+        const rawDiff = extractInsertedText(rawPrevious, rawCurrent);
+        const rawInserted = rawDiff ||
+          (typeof event?.data === "string" ? event.data : "");
+        const trimmedDiff = extractInsertedText(previousNormalized, currentRawText);
+        const normalizedInserted = normalizeVisibleText(
+          rawInserted || trimmedDiff || ""
+        );
 
-        if (hadSuggestion && !cooldownActiveBefore && !pasteEvent) {
-          const { charCount, wordCount } = noteSuggestionTyping(
-            state,
-            insertedText
-          );
-          if (charCount >= 10 || wordCount >= 2) {
-            activateSuggestionCooldown(state, "typing", {
-              text: previousRawText,
-              caret: previousCaret,
-            });
-          }
+        const newlineTriggered =
+          hadSuggestion &&
+          !cooldownActiveBefore &&
+          !pasteEvent &&
+          (paragraphEvent || (rawInserted && rawInserted.includes("\n")));
+
+        if (newlineTriggered) {
+          enterSuggestionCooldown(composer, state, "paragraph", {
+            text: previousRawText,
+            caret: previousCaret,
+          });
         }
 
         if (cooldownActiveBefore && !pasteEvent) {
-          // Skip cooldown expiry adjustments for paste events; they often replace large blocks.
           const paragraphTriggered =
-            paragraphEvent || (insertedText && insertedText.includes("\n"));
+            paragraphEvent || (rawInserted && rawInserted.includes("\n"));
           const baselineText = state.suggestionCooldown?.baselineText || "";
           const baselineCaret =
             typeof state.suggestionCooldown?.baselineCaret === "number"
@@ -625,16 +667,18 @@ function schedulePostInputRefresh(composer, previousText) {
             (baselineCaret >= 0 && currentCaret > baselineCaret);
 
           if (paragraphTriggered) {
-            clearSuggestionCooldown(state, "paragraph");
-          } else if (insertedText && progressedBeyondBaseline) {
-            const cleared = advanceSentenceStageForCooldown(state, insertedText);
+            enterSuggestionCooldown(composer, state, "paragraph", {
+              text: currentRawText,
+              caret: currentCaret,
+            });
+          } else if (normalizedInserted && progressedBeyondBaseline) {
+            const cleared = advanceSentenceStageForCooldown(state, normalizedInserted);
             if (cleared) {
               clearSuggestionCooldown(state, "sentence");
             }
           }
         }
       }
-
       state.lastCaret = currentCaret;
 
       updateComposerIntent(composer);
@@ -669,6 +713,7 @@ function schedulePostInputRefresh(composer, previousText) {
       const hasIntent = Boolean(state?.intentSegments?.length);
       emitHudIntentState(composer, state, hasIntent);
       if (state) {
+        clearSuggestionTimer(state);
         state.suggestion = null;
         state.suggestionCandidates = [];
         state.suggestionIndex = -1;
@@ -715,6 +760,10 @@ function schedulePostInputRefresh(composer, previousText) {
     if (active) {
       clearComposerState(active);
     }
+    if (typeof modalUnsubscribe === "function") {
+      modalUnsubscribe();
+      modalUnsubscribe = null;
+    }
     delete window[ENH_ROOT_FLAG];
     if (INTENT_DEBUG) {
       console.info(`${LOG_PREFIX} skeleton torn down`);
@@ -730,6 +779,23 @@ function schedulePostInputRefresh(composer, previousText) {
   };
 
   window[DEVTOOLS_KEY] = devtools;
+
+  modalUnsubscribe = subscribeToModalChannel((detail) => {
+    if (!detail || detail.id !== MODAL_IDS.suggestion) return;
+
+    const composer = watcher.getActiveComposer?.();
+    if (!composer) return;
+    const state = getComposerState(composer);
+    if (!state) return;
+
+    if (detail.type === "open") {
+      clearSuggestionTimer(state);
+    } else if (detail.type === "close") {
+      if (state.suggestion) {
+        scheduleSuggestionTimeout(composer, state);
+      }
+    }
+  });
 
   if (INTENT_DEBUG) {
     console.info(

@@ -38,11 +38,11 @@ Existing Tags / New Tags: arrays of keywords describing the task (may be empty).
 
 Existing Config / New Config: JSON objects that may contain 'intent_task_label' and 'intent_task_key'. Preserve or update these values so the merged prompt keeps the most descriptive task label and aligned slug.
 
-Your goal is to combine them into a single, improved, reusable prompt that remains universal for future use and preserves or strengthens specificity (especially numeric constraints).
+Your goal is to combine them into a single, improved, reusable prompt that remains universal for future use and preserves or strengthens actionable specificity (especially numeric or structural constraints).
 
-------------------------------
+-------------------------------------------------
 Merge Rules
-------------------------------
+-------------------------------------------------
 
 1) Preserve structure
 Keep the Original Prompt’s structure, headings, and flow. Integrate improvements within that structure—do not replace it.
@@ -51,46 +51,75 @@ Keep the Original Prompt’s structure, headings, and flow. Integrate improvemen
 If the New Prompt Draft adds clearer wording, better guardrails, steps, tone guidance, formatting, or QA checks, integrate those improvements.
 
 3) Avoid one-time topical content
-If the New Prompt Draft includes situational or instance-specific details (topics, client/brand names, one-off product references, dated requests), treat them as examples and do not bake them into the final reusable template.
-Example: Turn “compare AI Prompts vs AI Profiles” into a generic “write a blog article,” unless the Original already codifies that comparison as a reusable pattern.
+If the New Prompt Draft includes situational or instance-specific details (topics, brand names, product titles, dated events), treat them as examples only. 
+Do not bake them into the final reusable template unless the same subject appears repeatedly across both prompts.
 
+Example: Turn “compare AI Prompts vs AI Profiles” into a generic “write a blog article,” unless both prompts codify that comparison as a recurring reusable pattern.
+
+-------------------------------------------------
 4) Numeric & Parametric Specificity Policy (CRITICAL)
-Your highest priority is to retain or increase actionable specificity across versions—never dilute it.
+-------------------------------------------------
+Your highest priority is to retain or increase actionable specificity—never dilute it.
 
-What counts as “specifics”: numbers or explicit parameters such as word counts, character limits, time limits, steps, percentages, quantities, file counts, budgets/currency, ranges (min/max), model/temperature settings, limits like “no more than X,” “between A–B,” etc.
+“Specifics” include explicit parameters such as word counts, character limits, time limits, steps, percentages, quantities, file counts, budgets/currency, ranges (min/max), model or temperature settings, limits like “no more than X,” “between A–B,” etc.
 
 Precedence rules:
-Only one prompt has a specific → Keep it.
-(Original specific + New generic → keep Original specific; Original generic + New specific → keep New specific.)
+- Only one prompt has a specific → Keep it.
+  (Original specific + New generic → keep Original; Original generic + New specific → keep New.)
+- Both specify the same attribute → Prefer the New Prompt’s value (assume it is latest/authoritative).
+- If units differ, restate clearly but keep the New value as canonical.
+- Multiple different specifics for different attributes → Keep all; do not drop any unless truly contradictory.
+- Conflicts (e.g., “≤700 words” vs “≤1200 words”) → keep the New value; remove the older conflict.
+- Never generalize specifics: do not replace concrete numbers with vague adjectives (“short,” “brief,” etc.).
 
-Both have a specific for the same attribute (e.g., both specify word count) → Prefer the New Prompt’s value (assume it is the latest/authoritative).
+-------------------------------------------------
+4A) Specificity Balancing Rules (New — Critical)
+-------------------------------------------------
+Integrate stable, repeatable specifics while excluding one-off topical noise.
 
-If units differ, convert or restate clearly, but keep the New value as canonical.
+A. Determine Stability
+- If a detail (noun, parameter, or phrase) appears in both prompts → treat as stable → keep it.
+- If a detail appears only once and represents an ephemeral subject (industry, event, product, company) → replace with a descriptive variable placeholder {variable_name}.
+- Preserve numeric, structural, and stylistic constraints—they define the reusable format.
+- Never remove consistent operational constraints like “under 1000 words,” “include 3 bullet points,” or “two-column layout.”
 
-Multiple different specifics for different attributes (e.g., word count + meta length) → Keep all; do not drop any specific constraints unless they are truly contradictory.
+B. Variable vs Stable Conversion
+- Variable nouns (topic, audience, brand, industry, campaign name) → generalize into {variable} placeholders.
+- Stable process or workflow nouns (handoff kit, asset breakdown, QA checklist) → keep as-is.
+- When adding a variable, include it in the “variables” array in the merged prompt if not already present.
 
-Conflicts: If two specifics genuinely conflict (e.g., “≤700 words” vs “≤1200 words”), keep the New value and remove the conflicting older value. Do not merge into a vague range unless the New explicitly provides a range.
+C. Balancing Logic During Merge
+- Bias toward generalization when details differ between prompts.
+- Bias toward preservation when numeric or process details align or repeat.
+- Preserve recurring tone/style directions (e.g., “friendly but expert,” “structured bullet format”).
+- Remove unique topical sentences that would make the prompt single-use.
 
-Never generalize specifics: Do not replace concrete numbers with vague language (“short,” “brief,” “around X”). Keep exact values.
+D. Practical Examples
+✅ Keep: “Write a 1250-word article”  
+✅ Keep: “Meta description ≈155 characters”  
+🚫 Remove: “about AI in the fast food industry” → replace with “about {topic}”  
+✅ Keep: “Include sections for Title, Meta, Intro, and Full Article”  
+✅ Keep: “Tone: friendly, professional” (if repeated)  
 
+-------------------------------------------------
 5) Resolve overlap (non-numeric)
 When both prompts express similar non-numeric guidance, keep the clearest / most precise / most restrictive version and remove redundancy.
 
 6) Preserve completeness
-Do not remove established, important sections or rules from the Original Prompt. Add or refine—do not simplify away key instructions.
+Do not remove established, important sections or rules from the Original Prompt. Add or refine—never simplify away key instructions.
 
 7) Maintain tone and professionalism
 Match the voice and tone of the Original Prompt (directive, structured, reusable).
 
 8) Tag & Intent Label Merge
-- Combine the original and new tag arrays. Keep all meaningful nouns and domain-specific adjectives (e.g., "blog", "asset", "kit", "handoff"). Remove duplicates and generic helper words (create, make, please, write).
-- Preserve lowercase hyphenated formatting for tags.
+- Combine the original and new tag arrays. Keep all meaningful nouns and domain-specific adjectives (e.g., "blog", "asset", "kit", "handoff").
+- Remove duplicates and generic helper words (create, make, please, write).
+- Preserve lowercase hyphenated formatting.
 - Maintain or improve the task label: choose the most descriptive 'intent_task_label' and update 'intent_task_key' to its kebab-case form.
 
-------------------------------
+-------------------------------------------------
 Output format (JSON only)
-------------------------------
-
+-------------------------------------------------
 Return a JSON object:
 
 {
@@ -105,14 +134,13 @@ Return a JSON object:
 
 No markdown, no commentary, no code fences.
 
-------------------------------
+-------------------------------------------------
 Preview Generation Rules
-------------------------------
-
-Create a concise, natural-language preview that summarizes the purpose of the merged prompt.
+-------------------------------------------------
+Create a concise, natural-language preview summarizing the merged prompt’s purpose.
 
 Goal:
-Provide a short, verb-first sentence (80–100 characters) that feels like a helpful, predictive continuation of the user’s intent — the kind of ghost text Viberly would display while someone types.
+Provide a short, verb-first sentence (80–100 characters) that reads like predictive ghost text Viberly would show as the user types.
 
 Tone & Format:
 - Action-oriented, concise, specific.
@@ -123,54 +151,54 @@ Tone & Format:
 Verb Selection (Work Domain Taxonomy):
 
 Creative / Content Work:
-- Write — for text, blogs, captions, or copy.
-- Create — for assets, templates, or deliverables.
-- Design — for visuals, layouts, or UI.
-- Develop — for plans, outlines, or structured documents.
-- Compose — for professional writing (emails, posts, scripts).
+Write – for text, blogs, captions, or copy
+Create – for assets, templates, or deliverables
+Design – for visuals, layouts, or UI
+Develop – for plans, outlines, or structured docs
+Compose – for professional writing (emails, posts)
 
 Analytical / Technical Work:
-- Analyze — for data, insights, or performance.
-- Audit — for checking, validating, or diagnosing.
-- Optimize — for improving output or process efficiency.
-- Configure — for setup or system tuning.
-- Validate — for confirming accuracy or logic.
+Analyze – for data, insights, or performance
+Audit – for checking, validating, or diagnosing
+Optimize – for improving output or efficiency
+Configure – for setup or tuning
+Validate – for confirming accuracy or logic
 
 Process / Workflow Management:
-- Facilitate — for transitions, handoffs, or collaboration.
-- Organize — for structuring assets, tasks, or timelines.
-- Streamline — for simplifying or improving workflows.
-- Automate — for systemized or recurring tasks.
-- Schedule — for planning or sequencing work.
+Facilitate – for transitions, handoffs, or collaboration
+Organize – for structuring assets, tasks, or timelines
+Streamline – for simplifying or improving workflows
+Automate – for recurring or systemized tasks
+Schedule – for planning or sequencing work
 
 Communication / Collaboration:
-- Draft — for emails, messages, or proposals.
-- Coordinate — for cross-functional or team-based actions.
-- Respond — for replies or follow-ups.
-- Clarify — for refinement or resolving ambiguity.
-- Summarize / Explain — for clarity and synthesis.
+Draft – for emails, messages, or proposals
+Coordinate – for cross-functional or team-based actions
+Respond – for replies or follow-ups
+Clarify – for refinement or resolving ambiguity
+Summarize / Explain – for clarity and synthesis
 
 Governance / Control:
-- Prevent — for restrictions, rules, or safeguards.
-- Ensure — for enforcing standards or quality.
-- Monitor — for tracking or ongoing oversight.
-- Enforce — for compliance or consistency.
-- Approve / Review — for validation or signoff.
+Prevent – for restrictions, rules, or safeguards
+Ensure – for enforcing standards or quality
+Monitor – for tracking or ongoing oversight
+Enforce – for compliance or consistency
+Approve / Review – for validation or signoff
 
 Strategic / Decision Work:
-- Plan — for outlining strategy or next steps.
-- Prioritize — for task ranking or focus.
-- Assess — for evaluating options or results.
-- Recommend — for actionable suggestions.
-- Define — for establishing standards or roles.
+Plan – for outlining strategy or next steps
+Prioritize – for task ranking or focus
+Assess – for evaluating options or results
+Recommend – for actionable suggestions
+Define – for establishing standards or roles
 
 If no clear context: default to → Create → Write → Facilitate → Explain (in that order).
 
 Meaning over mirroring:
-Infer the intent — do not copy the first sentence. The preview should express what the merged prompt *does*, not how it is worded.
+Infer the intent — do not copy the first sentence. Express what the merged prompt *does*, not how it’s worded.
 
 Specificity:
-Include clear deliverables when relevant (“handoff kit”, “API workflow”, “summary brief”).
+Include clear deliverables when relevant (“handoff kit”, “blog asset”, “workflow summary”).
 
 Examples:
 "Facilitate a smooth project handoff by preparing the final summary and sharing key updates."

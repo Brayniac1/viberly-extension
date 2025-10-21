@@ -59,7 +59,6 @@ function clearSuggestionState(state) {
 }
 
 export async function refreshSuggestion({ composer, state, text }) {
-  void composer;
   const summary = state.intentSummary || null;
   const segments = Array.isArray(state.intentSegments)
     ? state.intentSegments

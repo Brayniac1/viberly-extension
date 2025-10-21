@@ -4,11 +4,11 @@
 (() => {
   const VG = (window.__VG = window.__VG || {});
 
-  const INTERCEPT_DEBUG =
+  const INTERCEPT_DEBUG = () =>
     typeof window !== "undefined" && Boolean(window.VG_INTENT_DEBUG);
 
   if (window.__VG_DISABLE_SEND_INTERCEPT) {
-    if (INTERCEPT_DEBUG) {
+    if (INTERCEPT_DEBUG()) {
       console.debug("[VG] intent intercept disabled");
     }
     return;
@@ -55,7 +55,7 @@
     try {
       return await sendRuntimeMessage(message);
     } catch (err) {
-      if (INTERCEPT_DEBUG) {
+      if (INTERCEPT_DEBUG()) {
         console.warn("[VG] runtime message failed", err);
       }
       return null;
@@ -64,6 +64,9 @@
 
 const RESPONSE_EXCERPT_LIMIT = 1500;
 const RESPONSE_MIN_LENGTH = 80;
+const RESPONSE_IDLE_CAPTURE_MS = 2000;
+const RESPONSE_IDLE_CHECK_INTERVAL_MS = 500;
+const RESPONSE_FALLBACK_ATTEMPTS = 25;
 const RESPONSE_MAX_ATTEMPTS = 45;
 const RESPONSE_POLL_INTERVAL_MS = 900;
 const RESPONSE_STABLE_COUNT = 2;
@@ -128,6 +131,16 @@ function getLatestAssistantReply(host) {
 function cleanupPendingCapture(id) {
   const entry = pendingResponseCaptures.get(id);
   if (!entry) return;
+  if (entry.quietTimer) {
+    clearInterval(entry.quietTimer);
+    entry.quietTimer = null;
+  }
+  if (entry.observer) {
+    try {
+      entry.observer.disconnect();
+    } catch {}
+    entry.observer = null;
+  }
   if (entry.timer) {
     clearTimeout(entry.timer);
     entry.timer = null;
@@ -136,13 +149,95 @@ function cleanupPendingCapture(id) {
   pendingResponseCaptures.delete(id);
 }
 
-function submitResponseCapture(entry, latest) {
+function getLatestAssistantElement(host) {
+  if (!host) return null;
+  try {
+    const nodes = document.querySelectorAll(
+      '[data-message-author-role="assistant"]'
+    );
+    if (!nodes.length) return null;
+    return nodes[nodes.length - 1] || null;
+  } catch {
+    return null;
+  }
+}
+
+function setupCompletionObserver(entry) {
+  const el = getLatestAssistantElement(entry.host);
+  if (!el) return false;
+
+  if (entry.observer) {
+    try {
+      entry.observer.disconnect();
+    } catch {}
+    entry.observer = null;
+  }
+
+  const recordMutation = () => {
+    entry.lastMutationAt = Date.now();
+  };
+
+  entry.lastMutationAt = Date.now();
+  const observer = new MutationObserver(() => recordMutation());
+  try {
+    observer.observe(el, {
+      characterData: true,
+      subtree: true,
+      childList: true,
+    });
+    entry.observer = observer;
+  } catch {
+    entry.observer = null;
+    return false;
+  }
+
+  if (!entry.quietTimer) {
+    entry.quietTimer = setInterval(() => {
+      try {
+        if (entry.cancelled) {
+          clearInterval(entry.quietTimer);
+          entry.quietTimer = null;
+          return;
+        }
+        const since =
+          typeof entry.lastMutationAt === "number"
+            ? Date.now() - entry.lastMutationAt
+            : Infinity;
+        const latest = getLatestAssistantReply(entry.host);
+        const latestLength = latest?.text?.length || 0;
+        if (
+          since >= RESPONSE_IDLE_CAPTURE_MS &&
+          latest &&
+          latest.text &&
+          latestLength >= RESPONSE_MIN_LENGTH
+        ) {
+          if (INTERCEPT_DEBUG()) {
+            console.debug("[VG][intent] response capture idle completion", {
+              intentMessageId: entry.intentMessageId,
+              length: latestLength,
+              quietForMs: since,
+            });
+          }
+          submitResponseCapture(entry, latest).catch(() => {});
+        }
+      } catch (err) {
+        if (INTERCEPT_DEBUG()) {
+          console.warn("[VG][intent] response idle check failed", err);
+        }
+      }
+    }, RESPONSE_IDLE_CHECK_INTERVAL_MS);
+  }
+
+  return true;
+}
+
+async function submitResponseCapture(entry, latest) {
   const excerpt = truncateExcerpt(latest.text || "");
   if (!excerpt || excerpt.length < RESPONSE_MIN_LENGTH) {
     cleanupPendingCapture(entry.intentMessageId);
     return;
   }
-  if (INTERCEPT_DEBUG) {
+  if (INTERCEPT_DEBUG()) {
     console.debug("[VG][intent] response capture ready", {
       intentMessageId: entry.intentMessageId,
       host: entry.host,
@@ -157,10 +252,57 @@ function submitResponseCapture(entry, latest) {
     source: entry.host,
   };
   try {
+    let synced = false;
+    if (browser?.storage?.local?.get) {
+      const stored = await browser.storage.local.get("VG_SESSION");
+      const session = stored?.VG_SESSION || null;
+      if (
+        session?.access_token &&
+        session?.refresh_token &&
+        Number.isFinite(session?.expires_at)
+      ) {
+        await sendRuntimeMessageSafe({
+          type: "SET_SESSION",
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+          expires_at: session.expires_at,
+          userId: session.userId || null,
+          email: session.email || null,
+        });
+        synced = true;
+      }
+    }
+    if (!synced) {
+      const sessionResp = await sendRuntimeMessageSafe({
+        type: "GET_SESSION",
+      });
+      const status = sessionResp?.status || {};
+      if (
+        status?.signedIn &&
+        typeof status?.access_token === "string" &&
+        typeof status?.refresh_token === "string"
+      ) {
+        await sendRuntimeMessageSafe({
+          type: "SET_SESSION",
+          access_token: status.access_token,
+          refresh_token: status.refresh_token,
+          expires_at: status.expires_at ?? null,
+          userId: status.userId || null,
+          email: status.email || null,
+        });
+      }
+    }
+  } catch (err) {
+    if (INTERCEPT_DEBUG()) {
+      console.warn("[VG] response capture session sync failed", err);
+    }
+  }
+  try {
     if (browser?.runtime?.sendMessage) {
-      browser.runtime
-        .sendMessage({ type: "VG_INTENT_RESPONSE_CAPTURE", payload })
-        .catch(() => void 0);
+      await browser.runtime.sendMessage({
+        type: "VG_INTENT_RESPONSE_CAPTURE",
+        payload,
+      });
     } else if (
       typeof chrome !== "undefined" &&
       chrome?.runtime?.sendMessage
@@ -183,7 +325,7 @@ function scheduleResponseCapture({
   sourceHost,
 }) {
   if (!intentMessageId) return;
-  if (INTERCEPT_DEBUG) {
+  if (INTERCEPT_DEBUG()) {
     console.debug("[VG][intent] schedule response capture", {
       intentMessageId,
       sourceHost,
@@ -213,6 +355,10 @@ function scheduleResponseCapture({
     attempts: 0,
     timer: null,
     cancelled: false,
+    fallbackSubmitted: false,
+    observer: null,
+    quietTimer: null,
+    lastMutationAt: null,
   };
 
   cleanupPendingCapture(intentMessageId);
@@ -222,11 +368,33 @@ function scheduleResponseCapture({
     if (entry.cancelled) return;
     const latest = getLatestAssistantReply(entry.host);
     if (latest && latest.hash) {
-      if (INTERCEPT_DEBUG) {
+      if (!entry.observer) {
+        setupCompletionObserver(entry);
+      }
+      const latestLength = latest.text?.length || 0;
+      const hasUsableExcerpt =
+        latestLength >= RESPONSE_MIN_LENGTH && latest.text?.trim();
+      if (
+        hasUsableExcerpt &&
+        entry.attempts >= RESPONSE_FALLBACK_ATTEMPTS &&
+        !entry.fallbackSubmitted
+      ) {
+        if (INTERCEPT_DEBUG()) {
+          console.debug("[VG][intent] response capture fallback", {
+            intentMessageId: entry.intentMessageId,
+            attempts: entry.attempts,
+            length: latestLength,
+          });
+        }
+        entry.fallbackSubmitted = true;
+        submitResponseCapture(entry, latest).catch(() => {});
+        return;
+      }
+      if (INTERCEPT_DEBUG()) {
         console.debug("[VG][intent] poll assistant", {
           intentMessageId: entry.intentMessageId,
           hash: latest.hash,
-          length: latest.text?.length || 0,
+          length: latestLength,
           stableCount: entry.stableCount,
         });
       }
@@ -242,7 +410,7 @@ function scheduleResponseCapture({
         latest.text.length >= RESPONSE_MIN_LENGTH &&
         entry.stableCount >= RESPONSE_STABLE_COUNT
       ) {
-        submitResponseCapture(entry, latest);
+        submitResponseCapture(entry, latest).catch(() => {});
         return;
       }
     }
@@ -388,7 +556,7 @@ function cloneSnapshot(record) {
           ? session.userId
           : null;
       if (!token || !userId) {
-        if (INTERCEPT_DEBUG) {
+        if (INTERCEPT_DEBUG()) {
           console.warn("[VG] intent REST skipped (no user session)", {
             signedIn: session?.signedIn ?? null,
             hasToken: Boolean(session?.access_token),
@@ -435,7 +603,7 @@ function cloneSnapshot(record) {
       }
       return null;
     } catch (err) {
-      if (INTERCEPT_DEBUG) {
+      if (INTERCEPT_DEBUG()) {
         console.warn("[VG] intent REST insert failed", err);
       }
       return null;
