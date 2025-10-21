@@ -16,13 +16,24 @@ function normalizeGuard(row) {
   const tags = Array.isArray(row.tags)
     ? row.tags.filter((tag) => typeof tag === "string" && tag.trim())
     : [];
-  const preview =
-    typeof row.preview === "string" ? row.preview.trim() : null;
+  const body =
+    typeof row.body === "string" ? String(row.body) : "";
+  const rawPreview =
+    typeof row.preview === "string" ? row.preview.trim() : "";
+  let preview = rawPreview;
+  if (!preview && body) {
+    preview = body.replace(/\s+/g, " ").slice(0, 160).trim();
+  }
+  if (!preview) preview = null;
+  const kind =
+    typeof row.kind === "string" && row.kind.trim()
+      ? row.kind.trim()
+      : "custom-guard";
   return {
     id: row.id,
     title: typeof row.title === "string" ? row.title.trim() : "",
     preview,
-    body: typeof row.body === "string" ? row.body : "",
+    body,
     tags,
     siteCategory:
       typeof row.siteCategory === "string" ? row.siteCategory : null,
@@ -43,6 +54,7 @@ function normalizeGuard(row) {
     updatedAt: row.updatedAt || null,
     createdAt: row.createdAt || null,
     userModifiedAt: row.userModifiedAt || null,
+    kind,
   };
 }
 

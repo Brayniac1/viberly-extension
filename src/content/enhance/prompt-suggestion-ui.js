@@ -35,6 +35,15 @@ const composersWithOverlay = new Set();
 const PROMPT_TOOLTIP_DEBUG =
   typeof window !== "undefined" && Boolean(window.VG_DEBUG_PROMPT_TOOLTIP);
 
+function getPromptUILogBuffer() {
+  if (typeof window === "undefined") return null;
+  const root = (window.__VG = window.__VG || {});
+  if (!Array.isArray(root.__VG_PROMPT_LOG__)) {
+    root.__VG_PROMPT_LOG__ = [];
+  }
+  return root.__VG_PROMPT_LOG__;
+}
+
 const SENTENCE_PUNCTUATION_RE = /[.!?;,:]/;
 let unsubscribeModalBus = null;
 let suppressSuggestionBroadcast = false;
@@ -129,6 +138,24 @@ function promptTooltipLog(label, payload) {
   if (!PROMPT_TOOLTIP_DEBUG) return;
   try {
     console.debug(`[VG][prompt-tooltip] ${label}`, payload);
+  } catch {}
+}
+
+function promptOverlayLog(label, payload) {
+  const buffer = getPromptUILogBuffer();
+  if (buffer) {
+    buffer.push({
+      ts: Date.now(),
+      label,
+      payload,
+    });
+    const MAX_ENTRIES = 200;
+    if (buffer.length > MAX_ENTRIES) {
+      buffer.splice(0, buffer.length - MAX_ENTRIES);
+    }
+  }
+  try {
+    console.log(`[VG][prompt-overlay] ${label}`, payload);
   } catch {}
 }
 
@@ -909,34 +936,51 @@ function handleKeyDown(event, composer) {
     !event.altKey
   ) {
     event.preventDefault();
-    const guardId = state?.suggestion?.guard?.id
-      ? String(state.suggestion.guard.id)
-      : null;
+    const guardMeta = state?.suggestion?.guard || null;
+    const guardId = guardMeta?.id ? String(guardMeta.id) : null;
+    const guardKind = guardMeta?.kind
+      ? String(guardMeta.kind).toLowerCase()
+      : "custom-guard";
+    const isGlobalPrompt = guardKind === "global-prompt";
     (async () => {
       if (guardId) {
         try {
-          const gate = await sendBG("VG_CAN_INSERT_CUSTOM", {
-            guard_id: guardId,
-          });
-          if (shouldBlockAutoGuardAtLimit(state?.suggestion?.guard, gate)) {
-            promptTooltipLog("tab insert auto guard limit", {
-              guardId,
-              summary: gate?.summary,
-            });
-            try {
-              await sendBG("VG_PAYWALL_SHOW", {
-                reason: "custom_guard_limit",
-                source: "auto_guard_tab",
+          const gate = await sendBG(
+            isGlobalPrompt ? "VG_CAN_INSERT_QUICK" : "VG_CAN_INSERT_CUSTOM",
+            isGlobalPrompt ? { prompt_id: guardId } : { guard_id: guardId }
+          );
+          if (!isGlobalPrompt) {
+            if (shouldBlockAutoGuardAtLimit(guardMeta, gate)) {
+              promptTooltipLog("tab insert auto guard limit", {
+                guardId,
+                summary: gate?.summary,
               });
-            } catch {}
-            return;
-          }
-          if (
+              try {
+                await sendBG("VG_PAYWALL_SHOW", {
+                  reason: "custom_guard_limit",
+                  source: "auto_guard_tab",
+                });
+              } catch {}
+              return;
+            }
+            if (
+              gate &&
+              gate.ok === false &&
+              gate.reason === "CUSTOM_GUARD_LIMIT"
+            ) {
+              promptTooltipLog("tab insert blocked by gate", { guardId });
+              return;
+            }
+          } else if (
             gate &&
             gate.ok === false &&
-            gate.reason === "CUSTOM_GUARD_LIMIT"
+            (gate.reason === "QUICK_ADD_LIMIT" ||
+              gate.reason === "CUSTOM_GUARD_LIMIT")
           ) {
-            promptTooltipLog("tab insert blocked by gate", { guardId });
+            promptTooltipLog("tab insert quick add blocked by gate", {
+              guardId,
+              reason: gate.reason,
+            });
             return;
           }
         } catch (err) {
@@ -1289,6 +1333,10 @@ export function updatePromptSuggestionUI(composer) {
 
 
   if (isSuggestionCooldownActive(state)) {
+    promptOverlayLog("hide:cooldown", {
+      guardId: suggestion?.guard?.id || null,
+      cooldown: state?.suggestionCooldown || null,
+    });
     hideOverlay(data, composer);
     return;
   }
@@ -1298,6 +1346,12 @@ export function updatePromptSuggestionUI(composer) {
     (state.suggestionHiddenUntil &&
       Date.now() < state.suggestionHiddenUntil)
   ) {
+    promptOverlayLog("hide:hidden-until", {
+      guardId: suggestion?.guard?.id || null,
+      hiddenUntil: state?.suggestionHiddenUntil || 0,
+      now: Date.now(),
+      hasSuggestion: Boolean(suggestion),
+    });
     hideOverlay(data, composer);
     return;
   }
@@ -1308,6 +1362,9 @@ export function updatePromptSuggestionUI(composer) {
       composer.ownerDocument?.activeElement || null
     )
   ) {
+    promptOverlayLog("hide:not-active", {
+      guardId: suggestion?.guard?.id || null,
+    });
     hideOverlay(data, composer);
     return;
   }
@@ -1322,23 +1379,37 @@ export function updatePromptSuggestionUI(composer) {
       state.suggestionEvalToken = 0;
       state.suggestionHiddenUntil = Date.now() + 300;
     }
+    promptOverlayLog("hide:plain-empty", {
+      plainTextSnapshot,
+    });
     hideOverlay(data, composer);
     return;
   }
 
   const ghost = buildGhostText(state);
   if (!ghost.inline) {
+    promptOverlayLog("hide:no-ghost", {
+      guardId: suggestion?.guard?.id || null,
+      preview: suggestion?.guard?.preview || null,
+      ghost,
+    });
     hideOverlay(data, composer);
     return;
   }
 
   if (!isCaretAtTextEnd(composer)) {
+    promptOverlayLog("hide:caret-not-end", {
+      guardId: suggestion?.guard?.id || null,
+    });
     hideOverlay(data, composer);
     return;
   }
 
   const caretRect = getCaretRect(composer);
   if (!caretRect) {
+    promptOverlayLog("hide:no-caret-rect", {
+      guardId: suggestion?.guard?.id || null,
+    });
     hideOverlay(data, composer);
     return;
   }
@@ -1346,6 +1417,10 @@ export function updatePromptSuggestionUI(composer) {
   const composerRect = composer.getBoundingClientRect();
   const availableWidth = composerRect.right - caretRect.right - 6;
   if (availableWidth <= 12) {
+    promptOverlayLog("hide:width", {
+      guardId: suggestion?.guard?.id || null,
+      availableWidth,
+    });
     hideOverlay(data, composer);
     return;
   }
@@ -1369,6 +1444,13 @@ export function updatePromptSuggestionUI(composer) {
   data.fullPreview = ghost.full;
   data.title = suggestion.guard?.title || "Suggested prompt";
   data.guardBody = suggestion.guard?.body || "";
+  promptOverlayLog("show", {
+    guardId: suggestion.guard?.id || null,
+    kind: suggestion.guard?.kind || null,
+    score: suggestion?.score ?? null,
+    inline: ghost.inline,
+    full: ghost.full,
+  });
 
   if (!suppressSuggestionBroadcast) {
     publishModalEvent({ type: "open", id: MODAL_IDS.suggestion });
@@ -1484,31 +1566,49 @@ function showSuggestionTooltip(composer) {
           return;
         }
         const guardId = suggestionId ? String(suggestionId) : null;
+        const guardKind = guardMeta?.kind
+          ? String(guardMeta.kind).toLowerCase()
+          : "custom-guard";
+        const isGlobalPrompt = guardKind === "global-prompt";
         if (guardId) {
           try {
-            const gate = await sendBG("VG_CAN_INSERT_CUSTOM", {
-              guard_id: guardId,
-            });
-            if (shouldBlockAutoGuardAtLimit(guardMeta, gate)) {
-              promptTooltipLog("button insert auto guard limit", {
-                guardId,
-                summary: gate?.summary,
-              });
-              try {
-                await sendBG("VG_PAYWALL_SHOW", {
-                  reason: "custom_guard_limit",
-                  source: "auto_guard_modal",
+            const gate = await sendBG(
+              isGlobalPrompt ? "VG_CAN_INSERT_QUICK" : "VG_CAN_INSERT_CUSTOM",
+              isGlobalPrompt ? { prompt_id: guardId } : { guard_id: guardId }
+            );
+            if (!isGlobalPrompt) {
+              if (shouldBlockAutoGuardAtLimit(guardMeta, gate)) {
+                promptTooltipLog("button insert auto guard limit", {
+                  guardId,
+                  summary: gate?.summary,
                 });
-              } catch {}
-              return;
-            }
-            if (
+                try {
+                  await sendBG("VG_PAYWALL_SHOW", {
+                    reason: "custom_guard_limit",
+                    source: "auto_guard_modal",
+                  });
+                } catch {}
+                return;
+              }
+              if (
+                gate &&
+                gate.ok === false &&
+                gate.reason === "CUSTOM_GUARD_LIMIT"
+              ) {
+                promptTooltipLog("button insert blocked by gate", {
+                  guardId,
+                });
+                return;
+              }
+            } else if (
               gate &&
               gate.ok === false &&
-              gate.reason === "CUSTOM_GUARD_LIMIT"
+              (gate.reason === "QUICK_ADD_LIMIT" ||
+                gate.reason === "CUSTOM_GUARD_LIMIT")
             ) {
-              promptTooltipLog("button insert blocked by gate", {
+              promptTooltipLog("button insert quick add blocked by gate", {
                 guardId,
+                reason: gate.reason,
               });
               return;
             }
@@ -1557,9 +1657,12 @@ function showSuggestionTooltip(composer) {
         if (guardId) {
           (async () => {
             try {
-              const resp = await sendBG("VG_LOG_GUARD_USE", {
-                guard_id: guardId,
-              });
+              const resp = await sendBG(
+                isGlobalPrompt ? "VG_LOG_QUICK_USE" : "VG_LOG_GUARD_USE",
+                isGlobalPrompt
+                  ? { prompt_id: guardId, source: "composer_suggestion" }
+                  : { guard_id: guardId }
+              );
               promptTooltipLog("insert log result", {
                 guardId,
                 ok: !!(resp && resp.ok),

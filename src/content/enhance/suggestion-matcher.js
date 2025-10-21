@@ -231,7 +231,10 @@ function buildCandidateTokens(guard) {
   if (guard.config?.intent_task_label) {
     parts.push(String(guard.config.intent_task_label));
   }
-  return tokenize(parts.join(" "));
+  const raw = parts.join(" ");
+  // Treat common separators (slash/dash/pipe) as word boundaries before tokenization.
+  const normalized = raw.replace(/[/\\|–—-]+/g, " ");
+  return tokenize(normalized);
 }
 
 function buildTagTokens(tags = []) {
@@ -335,9 +338,18 @@ export function rankGuardSuggestions({ guards = [], query }) {
       tagScore = Math.max(tagTokenOverlap, tailTagOverlap);
     }
 
-    const hasTagSupport = tagTokenOverlap >= 0.2 || tagScore >= 0.2;
+    // Treat tag alignment as additional overlap so global prompts with rich labels surface.
+    let tagMatches = 0;
+    if (guardTagTokens.length) {
+      const labelTagOverlap = overlapScore(significantLabelTokens, guardTagTokens);
+      const tailTagOverlap = overlapScore(significantTailTokens, guardTagTokens);
+      tagMatches = Math.max(labelTagOverlap, tailTagOverlap) >= 0.2 ? 1 : 0;
+    }
+
+    const hasTagSupport = tagTokenOverlap >= 0.2 || tagScore >= 0.2 || tagMatches > 0;
+    const totalMatches = meaningfulMatches + tagMatches;
     const hasMeaningfulOverlap =
-      meaningfulMatches >= 2 || (meaningfulMatches >= 1 && hasTagSupport);
+      totalMatches >= 2 || (totalMatches >= 1 && hasTagSupport);
 
     if (!hasMeaningfulOverlap) {
       continue;

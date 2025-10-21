@@ -16,6 +16,33 @@ import {
   resetSuggestionTyping,
 } from "./state.js";
 
+function getSuggestionLogBuffer() {
+  if (typeof window === "undefined") return null;
+  const root = (window.__VG = window.__VG || {});
+  if (!Array.isArray(root.__VG_SUGGEST_LOG__)) {
+    root.__VG_SUGGEST_LOG__ = [];
+  }
+  return root.__VG_SUGGEST_LOG__;
+}
+
+function suggestionLog(label, payload) {
+  const buffer = getSuggestionLogBuffer();
+  if (buffer) {
+    buffer.push({
+      ts: Date.now(),
+      label,
+      payload,
+    });
+    const MAX_ENTRIES = 200;
+    if (buffer.length > MAX_ENTRIES) {
+      buffer.splice(0, buffer.length - MAX_ENTRIES);
+    }
+  }
+  try {
+    console.log(`[VG][suggestion] ${label}`, payload);
+  } catch {}
+}
+
 const DISPLAY_THRESHOLD = 0.28;
 const MIN_CONFIDENCE = 0.48;
 const MAX_CANDIDATES = 5;
@@ -85,33 +112,48 @@ export async function refreshSuggestion({ composer, state, text }) {
     return null;
   }
 
-  if (!segments.length || confidence < MIN_CONFIDENCE) {
-    if (state?.intentDebug) {
-      state.intentDebug.lastRefresh.reason = "confidence";
-    }
-    clearSuggestionState(state);
-    return null;
-  }
+  const intentUsable = segments.length > 0 && confidence >= MIN_CONFIDENCE;
 
-  const labelText = buildLabelText(summary);
-  const tailText =
+  let labelText = buildLabelText(summary);
+  let tailText =
     state.intentMatchedText ||
     (segments.length ? segments[0].text || "" : "");
+  let forceFallback = false;
 
-  if (!labelText && !tailText) {
-    if (state?.intentDebug) {
-      state.intentDebug.lastRefresh.reason = "no-query";
-    }
-    clearSuggestionState(state);
-    return null;
+  if (!intentUsable || (!labelText && !tailText)) {
+    forceFallback = true;
   }
 
   const queryTags = flattenConstraintValues(summary?.constraints);
-  const query = deriveQueryFeatures({
+
+  let query = deriveQueryFeatures({
     labelText,
     tailText,
     tags: queryTags,
   });
+
+  const hasQueryTokens =
+    (query.significantLabelTokens?.length || 0) +
+      (query.significantTailTokens?.length || 0) +
+      (query.tagTokens?.length || 0) >
+    0;
+
+  if (!hasQueryTokens || forceFallback) {
+    const fallbackText =
+      typeof text === "string" && text.trim().length
+        ? text
+        : state.lastRawText || "";
+    const fallbackLabel = fallbackText.slice(0, 240);
+    query = {
+      ...deriveQueryFeatures({
+        labelText: fallbackLabel,
+        tailText: "",
+        tags: [],
+      }),
+      isFallback: true,
+      fallbackSource: "raw-text",
+    };
+  }
   if (state?.intentDebug) {
     state.intentDebug.lastRefresh.query = {
       labelText,
@@ -119,6 +161,12 @@ export async function refreshSuggestion({ composer, state, text }) {
       tags: queryTags,
     };
   }
+  suggestionLog("query", {
+    labelText,
+    tailText,
+    tags: queryTags,
+    confidence,
+  });
 
   const evalToken = ++evalSeq;
   state.suggestionEvalToken = evalToken;
@@ -137,6 +185,14 @@ export async function refreshSuggestion({ composer, state, text }) {
   }
 
   const ranked = rankGuardSuggestions({ guards, query });
+  suggestionLog("ranked", {
+    top: ranked.slice(0, 5).map((item) => ({
+      id: item.guard.id,
+      kind: item.guard.kind,
+      score: Number(item.score.toFixed(3)),
+      title: item.guard.title,
+    })),
+  });
   const filtered = ranked
     .filter((item) => item.score >= DISPLAY_THRESHOLD)
     .slice(0, MAX_CANDIDATES);
@@ -150,6 +206,15 @@ export async function refreshSuggestion({ composer, state, text }) {
         score: Number(item.score.toFixed(3)),
       }));
     }
+    suggestionLog("filtered-empty", {
+      threshold: DISPLAY_THRESHOLD,
+      top: ranked.slice(0, 3).map((item) => ({
+        id: item.guard.id,
+        kind: item.guard.kind,
+        score: Number(item.score.toFixed(3)),
+        title: item.guard.title,
+      })),
+    });
     clearSuggestionState(state);
     return null;
   }
@@ -168,6 +233,12 @@ export async function refreshSuggestion({ composer, state, text }) {
   resetSuggestionTyping(state);
 
   recordGuardShown(active.guard.id);
+  suggestionLog("suggestion", {
+    id: active.guard.id,
+    kind: active.guard.kind,
+    score: Number(active.score.toFixed(3)),
+    preview: active.guard.preview,
+  });
   return state.suggestion;
 }
 
