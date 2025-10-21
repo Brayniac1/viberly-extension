@@ -22,6 +22,7 @@
     "https://*.supabase.co/*",
     "https://api.openai.com/*",
     "https://viberly.ai/*",
+
     "https://lovable.dev/*",
     "https://*.lovable.dev/*",
     "https://*.replit.com/*",

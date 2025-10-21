@@ -133,6 +133,7 @@ function enterSuggestionCooldown(composer, state, reason, context = {}) {
   state.suggestionCandidates = [];
   state.suggestionIndex = -1;
   state.suggestionEvalToken = 0;
+  state.suggestionHoverLock = false;
   state.suggestionHiddenUntil = Date.now() + 400;
   clearPromptSuggestionUI(composer);
 }
@@ -142,7 +143,7 @@ function scheduleSuggestionTimeout(composer, state) {
   if (!state?.suggestion) return;
   state.suggestionDismissTimer = setTimeout(() => {
     enterSuggestionCooldown(composer, state, "timeout");
-  }, 6000);
+  }, 7000);
 }
 
 function getComposerCaretOffset(composer) {
@@ -435,7 +436,7 @@ function updateComposerIntent(composer) {
       updatePromptSuggestionUI(composer);
       const latest = getComposerState(composer);
       if (!latest) return;
-      if (latest.suggestion) {
+      if (latest.suggestion && !latest.suggestionHoverLock) {
         scheduleSuggestionTimeout(composer, latest);
       } else {
         clearSuggestionTimer(latest);
@@ -790,8 +791,14 @@ function schedulePostInputRefresh(composer, previousText) {
 
     if (detail.type === "open") {
       clearSuggestionTimer(state);
+      if (detail.reason === "tooltip") {
+        state.suggestionHoverLock = true;
+      }
     } else if (detail.type === "close") {
-      if (state.suggestion) {
+      if (detail.reason === "tooltip") {
+        state.suggestionHoverLock = false;
+      }
+      if (state.suggestion && !state.suggestionHoverLock) {
         scheduleSuggestionTimeout(composer, state);
       }
     }

@@ -33,6 +33,7 @@ export function getComposerState(composer) {
       suggestionHiddenUntil: 0,
       suggestionHistory: [],
       suggestionEvalToken: 0,
+      suggestionHoverLock: false,
       suggestionCooldown: {
         active: false,
         reason: "",
@@ -102,6 +103,7 @@ export function clearComposerState(composer) {
     state.suggestionHiddenUntil = 0;
     state.suggestionHistory = [];
     state.suggestionEvalToken = 0;
+    state.suggestionHoverLock = false;
     state.suggestionCooldown = {
       active: false,
       reason: "",

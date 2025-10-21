@@ -21,7 +21,7 @@ const OVERLAY_CLASS = "vg-prompt-suggestion";
 const OVERLAY_ID_PREFIX = "__vg_prompt_suggestion__";
 const MIRROR_ID = "__vib_marker_mirror__";
 const HIDE_AFTER_DISMISS_MS = 2000;
-const MAX_INLINE_WORDS = 4;
+const MAX_INLINE_WORDS = 5;
 const TOOLTIP_DELAY_MS = 150;
 const MARKER_MODAL_CLASS = "vib-marker-modal";
 const Z_STACK = {
@@ -34,6 +34,8 @@ const tooltipMap = new WeakMap();
 const composersWithOverlay = new Set();
 const PROMPT_TOOLTIP_DEBUG =
   typeof window !== "undefined" && Boolean(window.VG_DEBUG_PROMPT_TOOLTIP);
+const PROMPT_UI_DEBUG =
+  typeof window !== "undefined" && Boolean(window.VG_PROMPT_UI_DEBUG);
 
 function getPromptUILogBuffer() {
   if (typeof window === "undefined") return null;
@@ -142,6 +144,7 @@ function promptTooltipLog(label, payload) {
 }
 
 function promptOverlayLog(label, payload) {
+  if (!PROMPT_UI_DEBUG) return;
   const buffer = getPromptUILogBuffer();
   if (buffer) {
     buffer.push({
@@ -426,6 +429,7 @@ function hideActiveTooltip() {
   const active = tooltipState.active;
   if (!active) return;
   const { tooltip, doc, composer } = active;
+  publishModalEvent({ type: "close", id: MODAL_IDS.suggestion, reason: "tooltip" });
   clearTooltipHideTimer();
   tooltipState.active = null;
   tooltipState.pointerDown = false;
@@ -806,42 +810,21 @@ function applyFontStyles(target, composer) {
 
 function buildGhostText(state) {
   const suggestion = state?.suggestion;
-  if (!suggestion || !suggestion.preview) return { inline: "", full: "" };
-  const preview = suggestion.preview;
-  const tail = suggestion.query?.tailText ?? state.intentMatchedText ?? "";
-  const tailLower = (tail || "").toLowerCase();
-  const previewLower = preview.toLowerCase();
-  let overlap = 0;
-  const maxOverlap = Math.min(tailLower.length, previewLower.length);
-  for (let i = maxOverlap; i > 0; i--) {
-    if (tailLower.endsWith(previewLower.slice(0, i))) {
-      overlap = i;
-      break;
-    }
-  }
-  let remainder = preview.slice(overlap).replace(/^\s+/, "");
-  if (!remainder) return { inline: "", full: "" };
+  if (!suggestion) return { inline: "", full: "" };
+  const guard = suggestion.guard || {};
+  const titleSource =
+    typeof guard.title === "string" && guard.title.trim()
+      ? guard.title.trim()
+      : typeof suggestion.preview === "string"
+      ? suggestion.preview.trim()
+      : "";
+  const source = titleSource;
+  if (!source) return { inline: "", full: "" };
 
-  const tailTrimmed = tail.trimEnd();
-  const endsSentence = /[.!?]\s*$/.test(tailTrimmed);
-  if (!endsSentence) {
-    remainder =
-      remainder.charAt(0).toLowerCase() + remainder.slice(1);
-    remainder = ` ${remainder}`;
-  } else if (!tailTrimmed.endsWith(" ") && !remainder.startsWith(" ")) {
-    remainder = ` ${remainder}`;
-  }
-  const trimmedCore = remainder.trim();
-  if (!trimmedCore) {
-    return { inline: remainder, full: remainder };
-  }
-  const words = trimmedCore.split(/\s+/);
-  let inlineCore = trimmedCore;
-  if (words.length > MAX_INLINE_WORDS) {
-    inlineCore = `${words.slice(0, MAX_INLINE_WORDS).join(" ")}…`;
-  }
-  const inline = remainder.startsWith(" ") ? ` ${inlineCore}` : inlineCore;
-  return { inline, full: remainder };
+  const words = source.split(/\s+/).filter(Boolean).slice(0, MAX_INLINE_WORDS);
+  if (!words.length) return { inline: "", full: "" };
+  const inline = `[${words.join(" ")}...]`;
+  return { inline, full: source };
 }
 
 function getContentEditableCaretRect(composer) {
@@ -1494,6 +1477,7 @@ function showSuggestionTooltip(composer) {
 
   const doc = composer.ownerDocument || document;
   const tooltip = ensureTooltip(doc);
+  publishModalEvent({ type: "open", id: MODAL_IDS.suggestion, reason: "tooltip" });
   if (data?.el) {
     data.el.style.pointerEvents = "none";
   }

@@ -16,8 +16,11 @@ import {
   resetSuggestionTyping,
 } from "./state.js";
 
+const SUGGESTION_DEBUG =
+  typeof window !== "undefined" && Boolean(window.VG_DEBUG_SUGGESTIONS);
+
 function getSuggestionLogBuffer() {
-  if (typeof window === "undefined") return null;
+  if (!SUGGESTION_DEBUG || typeof window === "undefined") return null;
   const root = (window.__VG = window.__VG || {});
   if (!Array.isArray(root.__VG_SUGGEST_LOG__)) {
     root.__VG_SUGGEST_LOG__ = [];
@@ -26,6 +29,7 @@ function getSuggestionLogBuffer() {
 }
 
 function suggestionLog(label, payload) {
+  if (!SUGGESTION_DEBUG) return;
   const buffer = getSuggestionLogBuffer();
   if (buffer) {
     buffer.push({
