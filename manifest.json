@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Viberly AI",
   "short_name": "Viberly AI",
-  "version": "1.0.48",
+  "version": "1.0.49",
   "description": "Viberly is an AI tool that learns how you work, auto-creates prompts, and predicts when to insert them instantly.",
   "icons": {
     "16": "assets/active-pill-16.png",
