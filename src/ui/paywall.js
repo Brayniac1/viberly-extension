@@ -19,6 +19,20 @@ function isCGReason(r) {
 async function startCheckoutByPlan(plan) {
   if (window.__VGBilling?.checkout) return window.__VGBilling.checkout(plan);
   const price_id = plan === "pro" ? PRICE_PRO : PRICE_BASIC;
+  const tryBackgroundCheckout = async () => {
+    try {
+      const resp = await browser.runtime
+        .sendMessage({ type: "PAYWALL:CHECKOUT", plan, price_id })
+        .catch(() => null);
+      if (resp?.ok && resp.url) {
+        window.open(resp.url, "_blank");
+        return true;
+      }
+    } catch (err) {
+      console.warn("[VG][paywall] BG checkout failed:", err);
+    }
+    return false;
+  };
   try {
     const {
       data: { session },
@@ -37,8 +51,11 @@ async function startCheckoutByPlan(plan) {
     const j = await res.json().catch(() => ({}));
     if (!res.ok || !j?.url) throw new Error("Checkout failed");
     window.open(j.url, "_blank");
+    return;
   } catch (e) {
     console.warn("[VG][paywall] checkout fallback failed:", e);
+    const ok = await tryBackgroundCheckout();
+    if (ok) return;
     alert("Could not start checkout. Please open Settings → Billing.");
   }
 }

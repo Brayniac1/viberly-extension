@@ -4389,14 +4389,22 @@
       basic: {
         title: "Basic",
         price: "$4.99/mo",
-        bullets: ["Up to 3 Custom Prompts", "Up to 3 Quick Adds"],
+        bullets: [
+          "Up to 3 Custom Prompts",
+          "Up to 3 Quick Adds",
+          "5 Enhance Prompts / mo",
+        ],
         footnote: "Cancel anytime.",
       },
       pro: {
         title: "Pro",
         price: "$9.99/mo",
         popular: true,
-        bullets: ["Unlimited Custom Prompts", "Unlimited Quick Adds"],
+        bullets: [
+          "Unlimited Custom Prompts",
+          "Unlimited Quick Adds",
+          "Unlimited Enhance Prompts",
+        ],
         footnote: "Best for active builders.",
       },
     };
@@ -4493,23 +4501,61 @@
     const B = (id) => q(`#${id}`);
 
     async function billingStartCheckout(price_id) {
-      const {
-        data: { session },
-      } = await (window.VG?.auth?.getSession?.() ?? {
-        data: { session: null },
-      });
-      if (!session?.access_token) return;
-      const res = await fetch(FUNCTION_URL_CHECKOUT, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ price_id }),
-      });
-      if (!res.ok) return console.error("[billing]", await res.text());
-      const { url } = await res.json();
-      window.open(url, "_blank");
+      const plan =
+        price_id === PRICE_PRO
+          ? "pro"
+          : price_id === PRICE_BASIC
+          ? "basic"
+          : null;
+      const startViaBackground = async () => {
+        try {
+          const resp = await browser.runtime
+            .sendMessage({ type: "PAYWALL:CHECKOUT", plan, price_id })
+            .catch(() => null);
+          if (resp?.ok && resp.url) {
+            window.open(resp.url, "_blank");
+            return true;
+          }
+          if (resp && !resp.ok && resp.error) {
+            console.warn("[billing] BG checkout error:", resp.error);
+          }
+        } catch (err) {
+          console.warn("[billing] BG checkout failed:", err);
+        }
+        return false;
+      };
+
+      try {
+        const {
+          data: { session },
+        } = await (window.VG?.auth?.getSession?.() ?? {
+          data: { session: null },
+        });
+        if (!session?.access_token) throw new Error("Not signed in");
+        const res = await fetch(FUNCTION_URL_CHECKOUT, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ price_id }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json?.url) {
+          const err =
+            json?.error ||
+            (typeof json === "string" ? json : `HTTP_${res.status}`);
+          throw new Error(err || "Checkout failed");
+        }
+        window.open(json.url, "_blank");
+        return;
+      } catch (err) {
+        console.warn("[billing] direct checkout failed:", err);
+        const ok = await startViaBackground();
+        if (!ok) {
+          alert("Could not start checkout. Please try again in a moment.");
+        }
+      }
     }
 
     async function billingOpenPortal() {

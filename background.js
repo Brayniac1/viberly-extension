@@ -18,9 +18,12 @@ function dbgDebug(...args) {
 // ---- Viberly logger (quiet by default; runtime toggle via browser.storage.local.VG_LOG_LEVEL) ----
 let VG_LOG_LEVEL = "info"; // 'silent' | 'error' | 'warn' | 'info' | 'debug'
 try {
-  browser.storage.local.get("VG_LOG_LEVEL", (o) => {
-    if (typeof o?.VG_LOG_LEVEL === "string") VG_LOG_LEVEL = o.VG_LOG_LEVEL;
-  });
+  browser.storage.local
+    .get("VG_LOG_LEVEL")
+    .then((o) => {
+      if (typeof o?.VG_LOG_LEVEL === "string") VG_LOG_LEVEL = o.VG_LOG_LEVEL;
+    })
+    .catch(() => {});
   browser.storage.onChanged.addListener((changes, area) => {
     if (area === "local" && changes.VG_LOG_LEVEL) {
       VG_LOG_LEVEL = changes.VG_LOG_LEVEL.newValue || "error";
@@ -80,6 +83,11 @@ const VG_SUPABASE_URL = "https://auudkltdkakpnmpmddaj.supabase.co";
 const VG_SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF1dWRrbHRka2FrcG5tcG1kZGFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU3MDA3NTYsImV4cCI6MjA3MTI3Njc1Nn0.ukDpH6EXksctzWHMSdakhNaWbgFZ61UqrpvzwTy03ho";
 // -----------------
+
+const VG_STRIPE_PRICE_BASIC = "price_1RyYJuCKsHaxtGkUiLlRAAd3";
+const VG_STRIPE_PRICE_PRO = "price_1RyYMaCKsHaxtGkUMaScJLZS";
+const VG_STRIPE_CHECKOUT_URL =
+  "https://auudkltdkakpnmpmddaj.supabase.co/functions/v1/create-checkout-session";
 
 function estimateTokenCount(text) {
   const clean = String(text || "").trim();
@@ -3243,6 +3251,56 @@ async function handleMessage(msg, _host = "", sender = null) {
       } catch (e) {
         console.warn("[VG] VG_START_PROMPT_CHECKOUT error:", e);
         return { ok: false, error: String(e?.message || e) };
+      }
+    }
+
+    case "PAYWALL:CHECKOUT": {
+      try {
+        const plan = String(msg?.plan || "").toLowerCase();
+        const price_id =
+          msg?.price_id ||
+          (plan === "pro"
+            ? VG_STRIPE_PRICE_PRO
+            : plan === "basic"
+            ? VG_STRIPE_PRICE_BASIC
+            : null);
+        if (!price_id) {
+          return { ok: false, error: "MISSING_PRICE" };
+        }
+
+        let session = null;
+        try {
+          const current = await client.auth.getSession();
+          session = current?.data?.session || null;
+        } catch {}
+        if (!session?.access_token) {
+          session = await __vgEnsureBGSession(10, 300);
+        }
+        if (!session?.access_token) {
+          return { ok: false, error: "NO_SESSION" };
+        }
+
+        const res = await fetch(VG_STRIPE_CHECKOUT_URL, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ price_id }),
+        });
+        const body = await res
+          .json()
+          .catch(() => ({ ok: false, error: "INVALID_JSON" }));
+
+        if (!res.ok || !body?.url) {
+          const err = body?.error || `HTTP_${res.status}`;
+          return { ok: false, error: err };
+        }
+
+        return { ok: true, url: body.url };
+      } catch (err) {
+        console.warn("[VG] PAYWALL:CHECKOUT failed:", err);
+        return { ok: false, error: String(err?.message || err) };
       }
     }
 
