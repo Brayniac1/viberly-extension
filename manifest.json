@@ -22,7 +22,6 @@
     "https://*.supabase.co/*",
     "https://api.openai.com/*",
     "https://viberly.ai/*",
-
     "https://lovable.dev/*",
     "https://*.lovable.dev/*",
     "https://*.replit.com/*",
@@ -159,6 +158,7 @@
         "src/ui/settings.js",
         "src/ui/paywall.js",
         "src/ui/slashcommands.js",
+        "vg_data.js",
         "src/interceptsend.js",
         "src/ui/ai-chat.js",
         "src/ui/bug-buster.js",
@@ -168,7 +168,8 @@
         "assets/*",
         "src/usage/tokenCounter.js",
         "vendor/gpt-tokenizer/*",
-        "vendor/gpt-tokenizer/**/*"
+        "vendor/gpt-tokenizer/**/*",
+        "vendor/supabase.umd.js"
       ],
       "matches": [
         "<all_urls>"

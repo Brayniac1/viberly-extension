@@ -1,5 +1,9 @@
 // src/ui/quickmenu.js
 (() => {
+  try {
+    window.__vgEnsureKeepAlive?.();
+  } catch {}
+
   // make APP/Z/MENU_DX available if the big script defined them, else safe defaults
  const CONSTS = window.__VG_CONSTS || {
     APP: "vibeguardian",
@@ -1420,12 +1424,23 @@
           .get("VG_SESSION")
           .then((o) => res(o?.VG_SESSION || null))
       );
+      try {
+        console.log("[VG][quickmenu] VG_SESSION snapshot", {
+          present: !!sot,
+          hasAccess: !!sot?.access_token,
+          hasRefresh: !!sot?.refresh_token,
+          exp: sot?.expires_at || null,
+        });
+      } catch {}
       if (
         !sot ||
         !sot.access_token ||
         !sot.refresh_token ||
         !Number.isFinite(sot.expires_at)
       ) {
+        try {
+          console.warn("[VG][quickmenu] ensureBGSession missing tokens");
+        } catch {}
         return false; // nothing to seed
       }
       const r = await sendBG(
@@ -1439,8 +1454,17 @@
         },
         1500
       );
+      try {
+        console.log("[VG][quickmenu] ensureBGSession response", {
+          ok: r?.ok ?? null,
+          error: r?.error || null,
+        });
+      } catch {}
       return !!(r && r.ok);
-    } catch {
+    } catch (err) {
+      try {
+        console.error("[VG][quickmenu] ensureBGSession error", err);
+      } catch {}
       return false;
     }
   }
@@ -3072,6 +3096,7 @@
 
           // ONE helper both row and button call — preflight gate with guard_id, then insert, then log
           async function insertCustom() {
+            let ownedInsert = false;
             if (!cg.body || !cg.body.trim()) {
               console.warn("[VG][qm] CG body empty; inert row:", cg);
               return;
@@ -3082,18 +3107,30 @@
               const gate = await sendBG("VG_CAN_INSERT_CUSTOM", {
                 guard_id: String(cg.id),
               });
+              try {
+                console.log("[VG][quickmenu] gate result", {
+                  guardId: String(cg.id),
+                  ok: gate?.ok ?? null,
+                  reason: gate?.reason || null,
+                  owned: gate?.owned ?? null,
+                  summary: gate?.summary || null,
+                });
+              } catch {}
+              ownedInsert = gate?.owned === true;
               if (shouldBlockAutoGuardAtLimit(cg, gate)) {
                 __qmLog("CG insert: auto-generated limit enforced", {
                   guardId: String(cg.id),
                   summary: gate?.summary,
                 });
-                try {
-                  await sendBG("VG_PAYWALL_SHOW", {
-                    reason: "custom_guard_limit",
-                    source: "auto_guard_quickmenu",
-                  });
-                } catch {}
-                return;
+                if (!ownedInsert) {
+                  try {
+                    await sendBG("VG_PAYWALL_SHOW", {
+                      reason: "custom_guard_limit",
+                      source: "auto_guard_quickmenu",
+                    });
+                  } catch {}
+                  return;
+                }
               }
               if (
                 gate &&
@@ -3101,8 +3138,10 @@
                 gate.reason === "CUSTOM_GUARD_LIMIT"
               ) {
                 __qmLog("CG insert: BLOCKED by plan limit; paywall should pop");
-                // BG already sent VG_PAYWALL_SHOW to this tab; do NOT insert.
-                return;
+                if (!ownedInsert) {
+                  // BG already sent VG_PAYWALL_SHOW to this tab; do NOT insert.
+                  return;
+                }
               }
             } catch (e) {
               __qmLog("CG insert: pre-flight threw", e);
@@ -3168,7 +3207,9 @@
             })();
 
             try {
-              await maybePromptUpgrade();
+              if (!ownedInsert) {
+                await maybePromptUpgrade();
+              }
             } catch {}
             document.getElementById("vg-quick-menu")?.remove();
           }

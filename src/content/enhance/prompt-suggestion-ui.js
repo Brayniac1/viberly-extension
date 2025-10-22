@@ -17,6 +17,11 @@ import {
   subscribeToModalChannel,
   MODAL_IDS,
 } from "./modal-channel.js";
+
+try {
+  window.__vgEnsureKeepAlive?.();
+} catch {}
+
 const OVERLAY_CLASS = "vg-prompt-suggestion";
 const OVERLAY_ID_PREFIX = "__vg_prompt_suggestion__";
 const MIRROR_ID = "__vib_marker_mirror__";
@@ -197,11 +202,20 @@ async function sendBG(type, payload, timeoutMs = 1500) {
             complete = true;
             clearTimeout(timer);
             if (browser.runtime.lastError) {
+          try {
+            console.warn("[VG][prompt] sendBG lastError", {
+              type,
+              reason: browser.runtime.lastError?.message || "unknown",
+            });
+          } catch {}
               return resolve("__NO_RECEIVER__");
             }
             resolve(resp);
           });
-      } catch {
+      } catch (err) {
+        try {
+          console.warn("[VG][prompt] sendBG exception", { type, err });
+        } catch {}
         resolve("__NO_RECEIVER__");
       }
     });
@@ -209,6 +223,9 @@ async function sendBG(type, payload, timeoutMs = 1500) {
 
   let res = await ask();
   if (res === "__NO_RECEIVER__" || res === "__TIMEOUT__") {
+    try {
+      console.warn("[VG][prompt] sendBG retrying wake", { type, reason: res });
+    } catch {}
     try {
       const {
         data: { session },
@@ -229,12 +246,85 @@ async function sendBG(type, payload, timeoutMs = 1500) {
             .then(() => resolve())
         );
       }
-    } catch {
+    } catch (err) {
+      try {
+        console.warn("[VG][prompt] sendBG retry seeding failed", {
+          type,
+          err,
+        });
+      } catch {}
       /* ignore seeding failures; retry regardless */
     }
     res = await ask();
+    try {
+      console.log("[VG][prompt] sendBG retry result", { type, res });
+    } catch {}
+  }
+  if (res === "__NO_RECEIVER__" || res === "__TIMEOUT__") {
+    try {
+      console.error("[VG][prompt] sendBG final failure", { type, res });
+    } catch {}
+  } else {
+    try {
+      console.log("[VG][prompt] sendBG success", {
+        type,
+        ok: res?.ok ?? null,
+        reason: res?.reason || null,
+      });
+    } catch {}
   }
   return res;
+}
+
+/* === NEW: ensure BG worker is signed in using SoT tokens before any DB read === */
+async function __vgEnsureBGSessionFromSoT() {
+  try {
+    const sot = await new Promise((resolve) =>
+      browser.storage.local.get("VG_SESSION").then((o) => resolve(o?.VG_SESSION || null))
+    );
+    try {
+      console.log("[VG][prompt] VG_SESSION snapshot", {
+        present: !!sot,
+        hasAccess: !!sot?.access_token,
+        hasRefresh: !!sot?.refresh_token,
+        exp: sot?.expires_at || null,
+      });
+    } catch {}
+    if (
+      !sot ||
+      !sot.access_token ||
+      !sot.refresh_token ||
+      !Number.isFinite(sot.expires_at)
+    ) {
+      try {
+        console.warn("[VG][prompt] ensureBGSession missing tokens");
+      } catch {}
+      return false; // nothing to seed
+    }
+    const out = await sendBG(
+      "SET_SESSION",
+      {
+        access_token: sot.access_token,
+        refresh_token: sot.refresh_token,
+        expires_at: sot.expires_at,
+        userId: sot.userId || null,
+        email: sot.email || null,
+      },
+      1500
+    );
+    try {
+      console.log("[VG][prompt] ensureBGSession response", {
+        ok: out?.ok ?? null,
+        error: out?.error || null,
+      });
+    } catch {}
+    return !!(out && out.ok);
+  } catch (err) {
+    try {
+      console.error("[VG][prompt] ensureBGSession error", err);
+    } catch {}
+    return false;
+  }
 }
 
 function computeTrimOffset(text = "") {
@@ -428,10 +518,10 @@ function lockTooltip(source) {
 function hideActiveTooltip() {
   const active = tooltipState.active;
   if (!active) return;
+  tooltipState.active = null;
   const { tooltip, doc, composer } = active;
   publishModalEvent({ type: "close", id: MODAL_IDS.suggestion, reason: "tooltip" });
   clearTooltipHideTimer();
-  tooltipState.active = null;
   tooltipState.pointerDown = false;
   tooltipState.locks.clear();
   if (tooltipWheelTimer) {
@@ -928,31 +1018,92 @@ function handleKeyDown(event, composer) {
     (async () => {
       if (guardId) {
         try {
+          const seeded = await __vgEnsureBGSessionFromSoT();
+          try {
+            console.log("[VG][prompt] tab insert seeded?", {
+              guardId,
+              seeded,
+            });
+          } catch {}
           const gate = await sendBG(
             isGlobalPrompt ? "VG_CAN_INSERT_QUICK" : "VG_CAN_INSERT_CUSTOM",
             isGlobalPrompt ? { prompt_id: guardId } : { guard_id: guardId }
           );
+          try {
+            console.log("[VG][prompt] gate result", {
+              guardId,
+              source: isGlobalPrompt ? "quick" : "custom",
+              ok: gate?.ok ?? null,
+              reason: gate?.reason || null,
+              owned: gate?.owned ?? null,
+              summary: gate?.summary || null,
+            });
+          } catch {}
+          const ownedInsert = gate?.owned === true;
           if (!isGlobalPrompt) {
             if (shouldBlockAutoGuardAtLimit(guardMeta, gate)) {
               promptTooltipLog("tab insert auto guard limit", {
                 guardId,
                 summary: gate?.summary,
               });
-              try {
-                await sendBG("VG_PAYWALL_SHOW", {
+              if (!ownedInsert) {
+                const payload = {
                   reason: "custom_guard_limit",
                   source: "auto_guard_tab",
-                });
-              } catch {}
-              return;
-            }
-            if (
+                };
+                let shown = false;
+                try {
+                  const mod = await import(
+                    browser.runtime.getURL("src/ui/paywall.js")
+                  );
+                  const fn = mod?.default?.show || mod?.show;
+                  if (typeof fn === "function") {
+                    await fn(payload);
+                    shown = true;
+                  }
+                } catch (err) {
+                  console.warn("[VG][prompt] paywall import failed", err);
+                }
+                if (!shown) {
+                  try {
+                    await sendBG("VG_PAYWALL_SHOW", payload);
+                  } catch {}
+                }
+                dismissSuggestion(composer, state);
+                return;
+              }
+            } else if (
               gate &&
               gate.ok === false &&
               gate.reason === "CUSTOM_GUARD_LIMIT"
             ) {
               promptTooltipLog("tab insert blocked by gate", { guardId });
-              return;
+              if (!ownedInsert) {
+                const payload = {
+                  reason: "custom_guard_limit",
+                  source: "guard_tab_limit",
+                };
+                let shown = false;
+                try {
+                  const mod = await import(
+                    browser.runtime.getURL("src/ui/paywall.js")
+                  );
+                  const fn = mod?.default?.show || mod?.show;
+                  if (typeof fn === "function") {
+                    await fn(payload);
+                    shown = true;
+                  }
+                } catch (err) {
+                  console.warn("[VG][prompt] paywall import failed", err);
+                }
+                if (!shown) {
+                  try {
+                    await sendBG("VG_PAYWALL_SHOW", payload);
+                  } catch {}
+                }
+                dismissSuggestion(composer, state);
+                return;
+              }
             }
           } else if (
             gate &&
@@ -964,7 +1115,32 @@ function handleKeyDown(event, composer) {
               guardId,
               reason: gate.reason,
             });
-            return;
+            if (!ownedInsert) {
+              const payload = {
+                reason: gate.reason,
+                source: "quick_tab_limit",
+              };
+              let shown = false;
+              try {
+                const mod = await import(
+                  browser.runtime.getURL("src/ui/paywall.js")
+                );
+                const fn = mod?.default?.show || mod?.show;
+                if (typeof fn === "function") {
+                  await fn(payload);
+                  shown = true;
+                }
+              } catch (err) {
+                console.warn("[VG][prompt] paywall import failed", err);
+              }
+              if (!shown) {
+                try {
+                  await sendBG("VG_PAYWALL_SHOW", payload);
+                } catch {}
+              }
+              dismissSuggestion(composer, state);
+              return;
+            }
           }
         } catch (err) {
           promptTooltipLog("tab insert gate error", {
@@ -1530,6 +1706,7 @@ function showSuggestionTooltip(composer) {
         evt.stopPropagation();
         evt.preventDefault();
         const dataRef = overlayMap.get(composer);
+        let ownedInsert = false;
         promptTooltipLog("insert pointerdown", {
           guardId: suggestionId,
           hasData: Boolean(dataRef),
@@ -1556,23 +1733,60 @@ function showSuggestionTooltip(composer) {
         const isGlobalPrompt = guardKind === "global-prompt";
         if (guardId) {
           try {
+            const seeded = await __vgEnsureBGSessionFromSoT();
+            try {
+              console.log("[VG][prompt] modal insert seeded?", {
+                guardId,
+                seeded,
+              });
+            } catch {}
             const gate = await sendBG(
               isGlobalPrompt ? "VG_CAN_INSERT_QUICK" : "VG_CAN_INSERT_CUSTOM",
               isGlobalPrompt ? { prompt_id: guardId } : { guard_id: guardId }
             );
+            try {
+              console.log("[VG][prompt] gate result (modal)", {
+                guardId,
+                source: isGlobalPrompt ? "quick" : "custom",
+                ok: gate?.ok ?? null,
+                reason: gate?.reason || null,
+                owned: gate?.owned ?? null,
+                summary: gate?.summary || null,
+              });
+            } catch {}
+            ownedInsert = gate?.owned === true;
+
             if (!isGlobalPrompt) {
               if (shouldBlockAutoGuardAtLimit(guardMeta, gate)) {
                 promptTooltipLog("button insert auto guard limit", {
                   guardId,
                   summary: gate?.summary,
                 });
-                try {
-                  await sendBG("VG_PAYWALL_SHOW", {
+                if (!ownedInsert) {
+                  const payload = {
                     reason: "custom_guard_limit",
                     source: "auto_guard_modal",
-                  });
-                } catch {}
-                return;
+                  };
+                  let shown = false;
+                  try {
+                    const mod = await import(
+                      browser.runtime.getURL("src/ui/paywall.js")
+                    );
+                    const fn = mod?.default?.show || mod?.show;
+                    if (typeof fn === "function") {
+                      await fn(payload);
+                      shown = true;
+                    }
+                  } catch (err) {
+                    console.warn("[VG][prompt] paywall import failed", err);
+                  }
+                  if (!shown) {
+                    try {
+                      await sendBG("VG_PAYWALL_SHOW", payload);
+                    } catch {}
+                  }
+                  return;
+                }
               }
               if (
                 gate &&
@@ -1582,7 +1796,31 @@ function showSuggestionTooltip(composer) {
                 promptTooltipLog("button insert blocked by gate", {
                   guardId,
                 });
-                return;
+                if (!ownedInsert) {
+                  const payload = {
+                    reason: "custom_guard_limit",
+                    source: "guard_modal_limit",
+                  };
+                  let shown = false;
+                  try {
+                    const mod = await import(
+                      browser.runtime.getURL("src/ui/paywall.js")
+                    );
+                    const fn = mod?.default?.show || mod?.show;
+                    if (typeof fn === "function") {
+                      await fn(payload);
+                      shown = true;
+                    }
+                  } catch (err) {
+                    console.warn("[VG][prompt] paywall import failed", err);
+                  }
+                  if (!shown) {
+                    try {
+                      await sendBG("VG_PAYWALL_SHOW", payload);
+                    } catch {}
+                  }
+                  return;
+                }
               }
             } else if (
               gate &&
@@ -1594,7 +1832,31 @@ function showSuggestionTooltip(composer) {
                 guardId,
                 reason: gate.reason,
               });
-              return;
+              if (!ownedInsert) {
+                const payload = {
+                  reason: gate.reason,
+                  source: "quick_modal_limit",
+                };
+                let shown = false;
+                try {
+                  const mod = await import(
+                    browser.runtime.getURL("src/ui/paywall.js")
+                  );
+                  const fn = mod?.default?.show || mod?.show;
+                  if (typeof fn === "function") {
+                    await fn(payload);
+                    shown = true;
+                  }
+                } catch (err) {
+                  console.warn("[VG][prompt] paywall import failed", err);
+                }
+                if (!shown) {
+                  try {
+                    await sendBG("VG_PAYWALL_SHOW", payload);
+                  } catch {}
+                }
+                return;
+              }
             }
           } catch (err) {
             promptTooltipLog("button insert gate error", {
@@ -1638,7 +1900,7 @@ function showSuggestionTooltip(composer) {
             caret: caretPos,
           });
         }
-        if (guardId) {
+        if (guardId && !ownedInsert) {
           (async () => {
             try {
               const resp = await sendBG(

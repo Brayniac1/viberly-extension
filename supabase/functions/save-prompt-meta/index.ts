@@ -58,7 +58,7 @@ Rules:
 - Tags: follow the Tags Rules below.
 - Include one host-related tag if source_host hints at a known tool (chatgpt, heygen, veo, runway, elevenlabs, midjourney, cursor, replit, bolt, windsurf, codeium).
 - site_category must be exactly one of: "programming", "general", "video", "marketing", "sales", "operations", "research".
-- preview: 80-100 characters, verb-first, action-oriented continuation (no trailing punctuation) that states how this highlight will be reused.
+- preview: follow the Preview Rules below.
 
 -------------------------------------------------
 Tags Rules (identical to Viberly’s Prompt Builder)

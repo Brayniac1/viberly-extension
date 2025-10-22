@@ -202,6 +202,14 @@
       // 2) Start boot (auth + DB placement + HUD)
       await import(browser.runtime.getURL("src/boot.js"));
 
+      // 2.1) Preload paywall UI so VG_PAYWALL_SHOW can render immediately
+      try {
+        await import(browser.runtime.getURL("src/ui/paywall.js"));
+        console.debug("[VG] paywall preloaded");
+      } catch (e) {
+        console.warn("[VG] paywall preload failed:", e);
+      }
+
       // 2.2) Mount Enhance underline skeleton (wrecks nothing if already active)
       try {
         await import(browser.runtime.getURL("src/content/enhance/index.js"));

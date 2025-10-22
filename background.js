@@ -45,6 +45,33 @@ const vgDebug = (...a) => {
 // Initial load message (debug-only)
 dbg("Viberly background loaded");
 
+// Keepalive ports (content scripts keep the SW awake)
+const KEEPALIVE_PORTS = new Set();
+
+browser.runtime.onConnect.addListener((port) => {
+  if (!port?.name || port.name !== "vg-keepalive") return;
+
+  KEEPALIVE_PORTS.add(port);
+  console.debug("[VG] keepalive connect", { totalPorts: KEEPALIVE_PORTS.size });
+
+  port.onMessage.addListener((msg) => {
+    if (msg?.type === "VG_KEEPALIVE") {
+      // no-op; just receiving the message keeps the worker active
+      console.debug("[VG] keepalive ping", {
+        ports: KEEPALIVE_PORTS.size,
+        ts: msg?.ts || null,
+      });
+    }
+  });
+
+  port.onDisconnect.addListener(() => {
+    KEEPALIVE_PORTS.delete(port);
+    console.debug("[VG] keepalive disconnect", {
+      totalPorts: KEEPALIVE_PORTS.size,
+    });
+  });
+});
+
 // Load Supabase UMD bundle (exposes global `supabase`)
 
 // ---- Config ----
@@ -1962,6 +1989,10 @@ async function handleMessage(msg, _host = "", sender = null) {
 // ===== COUNTER · Phase 1 Handshake (whitelist check only) =====
     case "COUNTER_HANDSHAKE": {
       try {
+        console.debug("[VG][bg] COUNTER_HANDSHAKE", {
+          host: msg?.payload?.host,
+          path: msg?.payload?.path,
+        });
         const host = (msg?.payload?.host || "")
           .toLowerCase()
           .replace(/^www\./, "");
@@ -2678,7 +2709,7 @@ async function handleMessage(msg, _host = "", sender = null) {
 
     case "VG_ACCOUNT_SUMMARY": {
       const snap = await __bgAccountSummary();
-      return { ok: true, summary: snap };
+      return { ok: true, summary: snap, owned: false };
     }
 
     // Pre-flight: can this tab insert a Custom Prompt (two-step rule)?
@@ -2686,6 +2717,10 @@ async function handleMessage(msg, _host = "", sender = null) {
     // 2) If used >= limit → allow only if (user_id, guard_id) exists in vg_guard_inserts; else block + paywall
     case "VG_CAN_INSERT_CUSTOM": {
       try {
+        console.debug("[VG][bg] CAN_INSERT_CUSTOM request", {
+          tabId: sender?.tab?.id || null,
+          guard: msg?.guard_id || null,
+        });
         const guard_id = String(msg?.guard_id || "").trim();
         if (!guard_id) return { ok: false, error: "MISSING_GUARD_ID" };
 
@@ -2699,8 +2734,12 @@ async function handleMessage(msg, _host = "", sender = null) {
         // Step 1: plan snapshot
         const snap = await __bgAccountSummary(); // { tier, used, quick, limit, status }
         if (snap.used < snap.limit) {
+          console.debug("[VG][bg] CAN_INSERT_CUSTOM within limit", {
+            used: snap.used,
+            limit: snap.limit,
+          });
           // below cap → allow
-          return { ok: true, summary: snap };
+          return { ok: true, summary: snap, owned: false };
         }
 
         // Step 2: at/over cap → check ownership (vg_guard_inserts)
@@ -2713,9 +2752,14 @@ async function handleMessage(msg, _host = "", sender = null) {
           .limit(1);
 
         const alreadyOwned = Array.isArray(own?.data) && own.data.length > 0;
+        console.debug("[VG][bg] CAN_INSERT_CUSTOM over limit", {
+          alreadyOwned,
+          used: snap.used,
+          limit: snap.limit,
+        });
 
         if (alreadyOwned) {
-          return { ok: true, summary: snap };
+          return { ok: true, summary: snap, owned: true };
         }
 
         // Block + paywall to the asking tab
@@ -2727,8 +2771,14 @@ async function handleMessage(msg, _host = "", sender = null) {
               payload: { reason: "custom_guard_limit" },
             });
         } catch {}
-        return { ok: false, reason: "CUSTOM_GUARD_LIMIT", summary: snap };
+        return {
+          ok: false,
+          reason: "CUSTOM_GUARD_LIMIT",
+          summary: snap,
+          owned: false,
+        };
       } catch (e) {
+        console.error("[VG][bg] CAN_INSERT_CUSTOM error", e);
         return { ok: false, error: String(e?.message || e) };
       }
     }
@@ -2738,6 +2788,10 @@ async function handleMessage(msg, _host = "", sender = null) {
     // 2) If quick >= limit → allow only if (user_id, prompt_id) exists in vg_quick_favs; else block + paywall
     case "VG_CAN_INSERT_QUICK": {
       try {
+        console.debug("[VG][bg] CAN_INSERT_QUICK request", {
+          tabId: sender?.tab?.id || null,
+          prompt: msg?.prompt_id || null,
+        });
         const prompt_id = String(msg?.prompt_id || "").trim();
         if (!prompt_id) return { ok: false, error: "MISSING_PROMPT_ID" };
 
@@ -2751,6 +2805,10 @@ async function handleMessage(msg, _host = "", sender = null) {
         // Step 1: plan snapshot (quick is the counter for quick adds)
         const snap = await __bgAccountSummary(); // { tier, used, quick, limit, status }
         if (snap.quick < snap.limit) {
+          console.debug("[VG][bg] CAN_INSERT_QUICK within limit", {
+            quick: snap.quick,
+            limit: snap.limit,
+          });
           // below cap → allow
           return { ok: true, summary: snap };
         }
@@ -2765,6 +2823,11 @@ async function handleMessage(msg, _host = "", sender = null) {
           .limit(1);
 
         const alreadyOwned = Array.isArray(own?.data) && own.data.length > 0;
+        console.debug("[VG][bg] CAN_INSERT_QUICK over limit", {
+          alreadyOwned,
+          quick: snap.quick,
+          limit: snap.limit,
+        });
 
         if (alreadyOwned) {
           return { ok: true, summary: snap }; // allow over cap if user has used it before
@@ -2783,6 +2846,7 @@ async function handleMessage(msg, _host = "", sender = null) {
         } catch {}
         return { ok: false, reason: "QUICK_ADD_LIMIT", summary: snap };
       } catch (e) {
+        console.error("[VG][bg] CAN_INSERT_QUICK error", e);
         return { ok: false, error: String(e?.message || e) };
       }
     }

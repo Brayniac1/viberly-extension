@@ -2,6 +2,10 @@
 // Phase 1: Handshake only. Confirms page ↔ background whitelist status. No counting.
 
 (() => {
+  try {
+    window.__vgEnsureKeepAlive?.();
+  } catch {}
+
   if (!browser?.runtime?.id) return;
 
   const HOST = (location.hostname || "").toLowerCase().replace(/^www\./, "");

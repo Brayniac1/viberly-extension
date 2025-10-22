@@ -1,5 +1,137 @@
 // src/boot.js
 (() => {
+  /* === Service worker keepalive (shared across content scripts) === */
+  try {
+    if (typeof window !== "undefined" && browser?.runtime?.connect) {
+      const globalKey = "__VG_KEEPALIVE_STATE";
+      const state =
+        window[globalKey] ||
+        (window[globalKey] = {
+          port: null,
+          timer: null,
+          reconnectTimer: null,
+        });
+
+      function startPingLoop(port) {
+        if (!port) return;
+        if (state.timer) return;
+
+        const sendPing = () => {
+          try {
+            port.postMessage({ type: "VG_KEEPALIVE", ts: Date.now() });
+          } catch (err) {
+            clearInterval(state.timer);
+            state.timer = null;
+            state.port = null;
+          }
+        };
+
+        sendPing();
+        state.timer = setInterval(sendPing, 25000);
+      }
+
+      function ensureKeepAlive() {
+        if (state.port) {
+          startPingLoop(state.port);
+          try {
+            console.debug("[VG][keepalive] reuse existing port", state.port);
+          } catch {}
+          return state.port;
+        }
+        try {
+          const port = browser.runtime.connect({ name: "vg-keepalive" });
+          state.port = port;
+          startPingLoop(port);
+          try {
+            console.debug("[VG][keepalive] connected", port);
+          } catch {}
+
+          port.onDisconnect.addListener(() => {
+            if (state.timer) {
+              clearInterval(state.timer);
+              state.timer = null;
+            }
+            state.port = null;
+            if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+            state.reconnectTimer = setTimeout(() => {
+              state.reconnectTimer = null;
+              ensureKeepAlive();
+              try {
+                console.debug("[VG][keepalive] reconnect scheduled");
+              } catch {}
+            }, 1000);
+          });
+
+          return port;
+        } catch (err) {
+          try {
+            console.warn("[VG][keepalive] connect failed", err);
+          } catch {}
+          return null;
+        }
+      }
+
+      window.__vgEnsureKeepAlive =
+        window.__vgEnsureKeepAlive || ensureKeepAlive;
+
+      try {
+        window.__vgEnsureKeepAlive();
+      } catch {}
+
+      document.addEventListener(
+        "visibilitychange",
+        () => {
+          if (document.visibilityState === "visible") {
+            try {
+              window.__vgEnsureKeepAlive?.();
+            } catch {}
+          }
+        },
+        false
+      );
+    }
+  } catch (err) {
+    try {
+      console.warn("[VG] keepalive bootstrap failed", err);
+    } catch {}
+  }
+
+  async function ensureSupabaseUMD() {
+    if (window.supabase?.createClient) return true;
+    if (window.__VG_SUPABASE_LOADED__) return true;
+
+    const url = browser?.runtime?.getURL?.('vendor/supabase.umd.js');
+    if (!url) return false;
+
+    try {
+      await new Promise((resolve, reject) => {
+        const el = document.createElement('script');
+        el.src = url;
+        el.async = false;
+        el.onload = () => resolve(true);
+        el.onerror = (e) => reject(e);
+        document.head.appendChild(el);
+      });
+      window.__VG_SUPABASE_LOADED__ = true;
+      return !!window.supabase?.createClient;
+    } catch (err) {
+      console.warn('[VG] supabase UMD load error', err);
+      return false;
+    }
+  }
+
+  // Ensure Supabase data layer (vg_data.js) loads early so window.VG is defined
+  (async () => {
+    const hasSupabase = await ensureSupabaseUMD();
+    if (!hasSupabase) return;
+    try {
+      const url = browser?.runtime?.getURL?.("vg_data.js");
+      if (url) await import(url);
+    } catch (err) {
+      console.warn("[VG] vg_data preload failed", err);
+    }
+  })();
+
   // ---- Flags: iframe-only + kill legacy ----
   const VG = (window.__VG = window.__VG || {});
   VG.flags = VG.flags || {};
