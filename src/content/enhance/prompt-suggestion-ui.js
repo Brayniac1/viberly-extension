@@ -821,7 +821,7 @@ function ensureOverlay(composer) {
     opacity: "0",
     transition: "opacity 120ms ease",
     zIndex: String(Z_STACK.ghost),
-    color: "rgba(210,215,230,0.7)",
+    color: "rgba(132,140,170,0.88)",
     fontStyle: "italic",
     whiteSpace: "pre",
     maxWidth: "60vw",
@@ -895,7 +895,7 @@ function applyFontStyles(target, composer) {
   target.style.fontSize = cs.fontSize;
   target.style.lineHeight = cs.lineHeight;
   target.style.letterSpacing = cs.letterSpacing;
-  target.style.color = "rgba(210,215,230,0.72)";
+  target.style.color = "rgba(132,140,170,0.88)";
 }
 
 function buildGhostText(state) {
