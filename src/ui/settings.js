@@ -1349,7 +1349,9 @@
 
       const { data, error } = await (window.VG?.db)
         .from("vg_profiles")
-        .select("tier, custom_guards_count, quick_adds_count")
+        .select(
+          "tier, custom_guards_count, custom_guards_created, vg_guards_automated, quick_adds_count"
+        )
         .eq("user_id", session.user.id)
         .single();
 
