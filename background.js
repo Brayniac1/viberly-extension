@@ -959,7 +959,7 @@ async function __bgAccountSummary() {
     const prof = await client
       .from("vg_profiles")
       .select(
-        "tier, custom_guards_count, quick_adds_count, subscription_status, ai_enhance_total_used, ai_enhance_month_used, ai_enhance_month_reset"
+        "tier, custom_guards_count, custom_guards_created, vg_guards_automated, quick_adds_count, subscription_status, ai_enhance_total_used, ai_enhance_month_used, ai_enhance_month_reset"
       )
       .eq("user_id", uid)
       .single();
@@ -4310,7 +4310,7 @@ async function handleMessage(msg, _host = "", sender = null) {
         const res = await client
           .from("vg_profiles")
           .select(
-            "user_id, display_name, tier, subscription_status, custom_guards_count, updated_at, settings"
+            "user_id, display_name, tier, subscription_status, custom_guards_count, custom_guards_created, vg_guards_automated, updated_at, settings"
           )
           .eq("user_id", userId)
           .single();
