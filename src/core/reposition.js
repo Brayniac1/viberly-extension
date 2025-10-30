@@ -126,7 +126,9 @@ async function getBillingSummary() {
 
   const { data, error } = await db
     .from("vg_profiles")
-    .select("tier, custom_guards_count, subscription_status")
+    .select(
+      "tier, custom_guards_count, custom_guards_created, vg_guards_automated, subscription_status"
+    )
     .eq("user_id", session.user.id)
     .single();
 
